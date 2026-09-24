@@ -1,0 +1,89 @@
+import { Router } from 'express';
+import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
+
+import { badRequest, conflict, unauthorized } from '../errors.js';
+import { hashPassword, verifyPassword } from '../auth/password.js';
+import { signToken } from '../auth/jwt.js';
+import { requireAuth } from '../auth/middleware.js';
+
+const credentials = z.object({
+  email: z.string().trim().min(3).max(254).email(),
+  password: z.string().min(8).max(200),
+});
+
+function validate(schema, payload) {
+  const result = schema.safeParse(payload);
+  if (!result.success) {
+    const details = result.error.issues.map((issue) => ({
+      field: issue.path.join('.') || '(body)',
+      message: issue.message,
+    }));
+    throw badRequest('VALIDATION_ERROR', 'The request body is invalid.', details);
+  }
+  return result.data;
+}
+
+const publicUser = (row) => ({
+  id: row.id,
+  email: row.email,
+  createdAt: row.created_at ?? row.createdAt,
+});
+
+export function authRouter(config, db) {
+  const router = Router();
+
+  router.post('/auth/register', (req, res) => {
+    const { email, password } = validate(credentials, req.body);
+    const normalized = email.toLowerCase();
+
+    const existing = db
+      .prepare('SELECT id FROM users WHERE email = ?')
+      .get(normalized);
+    if (existing) {
+      throw conflict('EMAIL_TAKEN', 'An account with that email already exists.');
+    }
+
+    const user = {
+      id: randomUUID(),
+      email: normalized,
+      created_at: new Date().toISOString(),
+    };
+    db.prepare(
+      'INSERT INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)',
+    ).run(user.id, user.email, hashPassword(password), user.created_at);
+
+    res.status(201).json({
+      user: publicUser(user),
+      token: signToken({ sub: user.id }, config.jwtSecret, config.jwtExpiresIn),
+      expiresIn: config.jwtExpiresIn,
+    });
+  });
+
+  router.post('/auth/login', (req, res) => {
+    const { email, password } = validate(credentials, req.body);
+    const row = db
+      .prepare('SELECT * FROM users WHERE email = ?')
+      .get(email.toLowerCase());
+
+    // Same response whether the email is unknown or the password is wrong,
+    // so the endpoint cannot be used to enumerate accounts.
+    if (!row || !verifyPassword(password, row.password_hash)) {
+      throw unauthorized('Incorrect email or password.');
+    }
+
+    res.json({
+      user: publicUser(row),
+      token: signToken({ sub: row.id }, config.jwtSecret, config.jwtExpiresIn),
+      expiresIn: config.jwtExpiresIn,
+    });
+  });
+
+  router.get('/auth/me', requireAuth(config, db), (req, res) => {
+    res.json({ user: req.user });
+  });
+
+  return router;
+}
+
+export { validate };
