@@ -5,6 +5,7 @@ import { AppError, errorHandler, notFoundHandler } from './errors.js';
 import { healthRouter } from './routes/health.js';
 import { authRouter } from './routes/auth.js';
 import { datasetsRouter } from './routes/datasets.js';
+import { createProvider } from './llm/provider.js';
 
 /**
  * Body-parser reports its own failures with a `type` field and no error code
@@ -31,9 +32,15 @@ function normalizeBodyErrors() {
   };
 }
 
-export function createApp(config, db) {
+/**
+ * `deps` exists so the model provider can be swapped for a double in tests.
+ * It is the only seam: application behaviour never branches on NODE_ENV, and
+ * with `deps` omitted the app builds exactly what production would.
+ */
+export function createApp(config, db, deps = {}) {
   const app = express();
   app.disable('x-powered-by');
+  const llm = deps.llm === undefined ? createProvider(config) : deps.llm;
 
   app.use(cors({ origin: config.corsOrigin }));
   app.use(express.json({ limit: '1mb' }));
@@ -46,7 +53,7 @@ export function createApp(config, db) {
 
   app.use('/api', healthRouter(db));
   app.use('/api', authRouter(config, db));
-  app.use('/api', datasetsRouter(config, db));
+  app.use('/api', datasetsRouter(config, db, llm));
 
   app.use(notFoundHandler());
   app.use(normalizeBodyErrors());

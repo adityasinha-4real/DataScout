@@ -107,6 +107,19 @@ function matches(cell, operator, operand) {
  * query string without needing a nested encoding.
  */
 export function parseFilter(spec) {
+  // Already structured: the /ask path builds filters as objects so a column
+  // name containing a colon survives, which the string form cannot express.
+  if (spec !== null && typeof spec === 'object') {
+    const { column, operator, value = '' } = spec;
+    if (!OPERATORS.has(operator)) {
+      throw badRequest(
+        'UNKNOWN_OPERATOR',
+        `Unknown filter operator "${operator}". Supported: ${[...OPERATORS].join(', ')}.`,
+      );
+    }
+    return { column: String(column), operator, value: String(value) };
+  }
+
   const parts = String(spec).split(':');
   if (parts.length < 2) {
     throw badRequest(

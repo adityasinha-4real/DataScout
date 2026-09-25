@@ -2,11 +2,17 @@ import { Router } from 'express';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
-import { badRequest, notFound } from '../errors.js';
+import { badRequest, notFound, unavailable } from '../errors.js';
 import { requireAuth } from '../auth/middleware.js';
 import { parseCsv, toCsv } from '../csv/parse.js';
 import { profileDataset } from '../csv/profile.js';
 import { queryRows } from '../csv/query.js';
+import {
+  buildPrompt,
+  explainSpec,
+  parseSpec,
+  resolveSpec,
+} from '../llm/querySpec.js';
 import { validate } from './auth.js';
 
 const uploadQuery = z.object({
@@ -37,7 +43,11 @@ const summary = (row) => ({
   createdAt: row.created_at,
 });
 
-export function datasetsRouter(config, db) {
+const askBody = z.object({
+  question: z.string().trim().min(1).max(500),
+});
+
+export function datasetsRouter(config, db, llm = null) {
   const router = Router();
   router.use('/datasets', requireAuth(config, db));
 
@@ -143,6 +153,39 @@ export function datasetsRouter(config, db) {
       `attachment; filename="${row.name.replace(/[^\w.-]+/g, '_')}.csv"`,
     );
     res.send(toCsv(all.columns, all.rows.map((entry) => entry.row)));
+  });
+
+  /**
+   * Plain English in, a validated QuerySpec out, the existing engine doing the
+   * work. The model sees the column catalogue and the question; it never sees
+   * a cell, and nothing it returns is executed — it is checked against the
+   * schema and then against this dataset's real columns before it runs.
+   */
+  router.post('/datasets/:id/ask', async (req, res) => {
+    const row = load(req);
+    const { question } = validate(askBody, req.body ?? {});
+    if (!llm) {
+      throw unavailable(
+        'LLM_UNAVAILABLE',
+        'Natural-language search is not configured on this server.',
+      );
+    }
+
+    const { columns, rows } = parsed(row);
+    const profile = profileDataset(columns, rows);
+
+    const answer = await llm.complete(
+      buildPrompt({ profile, question, rowCount: rows.length }),
+    );
+    const spec = parseSpec(answer);
+    const result = queryRows({ columns, rows }, resolveSpec(spec, profile));
+
+    res.json({
+      datasetId: row.id,
+      spec,
+      explanation: explainSpec(spec),
+      ...result,
+    });
   });
 
   router.delete('/datasets/:id', (req, res) => {
