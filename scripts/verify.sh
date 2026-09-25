@@ -42,7 +42,20 @@ PKG_DIRS="backend frontend e2e"
 # The finish line may not move: this file and every pre-existing test
 # directory must be byte-identical to the base branch.
 BASE_REF="${VERIFY_BASE_REF:-main}"
-GUARDED="scripts/verify.sh backend/test e2e/tests"
+# Named file by file rather than by directory. C1 protects the tests that
+# existed before the run, and a directory-level diff also rejects *adding* a
+# test, which would make AC-T4..AC-T8 unprovable. Listing the files keeps every
+# pre-existing test frozen -- a diff also fires on deletion -- while leaving
+# room for the new ones. Nothing is removed from the guard.
+GUARDED="scripts/verify.sh
+  backend/test/helpers.js
+  backend/test/app.test.js
+  backend/test/auth.test.js
+  backend/test/csv-parse.test.js
+  backend/test/datasets.test.js
+  backend/test/profile.test.js
+  backend/test/query.test.js
+  e2e/tests/smoke.spec.ts"
 
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
   echo "[GUARD] FAIL: not a git repository, cannot verify the checks are untampered"
@@ -198,11 +211,11 @@ if [ "$TEST_CODE" -ne 0 ]; then
   fail "AC-07" "backend test command exited $TEST_CODE"
 elif [ -z "$COVERAGE" ]; then
   fail "AC-07" "no coverage summary found in the test output"
-elif awk -v c="$COVERAGE" 'BEGIN { exit !(c + 0 >= 70) }'; then
-  echo "         line coverage ${COVERAGE}% (threshold 70%)"
+elif awk -v c="$COVERAGE" 'BEGIN { exit !(c + 0 >= 95) }'; then
+  echo "         line coverage ${COVERAGE}% (threshold 95%)"
   pass "AC-07"
 else
-  fail "AC-07" "line coverage ${COVERAGE}% is below the 70% threshold"
+  fail "AC-07" "line coverage ${COVERAGE}% is below the 95% threshold"
 fi
 
 # ------------------------------------------------------------ AC-08 fe build
@@ -321,6 +334,145 @@ run_unit "AC-T1" "CSV ingest and parsing behaviour failed" \
   "test/csv-parse.test.js" "test/datasets.test.js"
 run_unit "AC-T2" "column profiling behaviour failed" "test/profile.test.js"
 run_unit "AC-T3" "filter/sort/rank/export behaviour failed" "test/query.test.js"
+
+# ------------------------------------------ AC-T4..AC-T8 iteration-2 criteria
+# Added under the one-time C1a exception in PLAN.md section 2.
+
+# Runs a backend test file with every model credential stripped from the
+# environment. A suite that passes here provably never reached the LLM API (C9).
+run_offline_unit() {
+  local id="$1"
+  shift
+  (cd backend && env -u ANTHROPIC_API_KEY -u LLM_MODEL \
+    node --disable-warning=ExperimentalWarning --test "$@") \
+    >"$TMP/test-$id.log" 2>&1
+}
+
+# The UI halves of AC-T4 and AC-T5 run inside the AC-12 Playwright suite, so
+# this only has to confirm the spec was actually collected rather than skipped.
+e2e_ran() {
+  [ -f "$TMP/e2e.log" ] && grep -q "$1" "$TMP/e2e.log"
+}
+
+# ----------------------------------------------------- AC-T4 ask (NL query)
+T4_ERR=""
+[ -d backend/src/llm ] || T4_ERR="$T4_ERR no-provider-interface:backend/src/llm"
+if [ ! -f backend/test/ask.test.js ]; then
+  T4_ERR="$T4_ERR no-test:backend/test/ask.test.js"
+elif ! run_offline_unit "AC-T4" "test/ask.test.js"; then
+  T4_ERR="$T4_ERR tests-failed(see .verify-tmp/test-AC-T4.log)"
+fi
+if [ ! -f e2e/tests/ask.spec.ts ]; then
+  T4_ERR="$T4_ERR no-e2e-spec:e2e/tests/ask.spec.ts"
+elif ! e2e_ran "ask\.spec\.ts"; then
+  T4_ERR="$T4_ERR e2e-spec-never-ran"
+fi
+# C9: model output is data. It is never executed, and the provider call may
+# only exist behind the src/llm interface.
+EXECUTES="$(grep -rlE "\beval\(|new Function\(|child_process" backend/src 2>/dev/null)"
+if [ -n "$EXECUTES" ]; then
+  T4_ERR="$T4_ERR executes-untrusted-input:$(echo "$EXECUTES" | tr '\n' ',')"
+fi
+STRAY_LLM="$(grep -rlE "api\.anthropic\.com" backend/src 2>/dev/null |
+  grep -v '^backend/src/llm/')"
+if [ -n "$STRAY_LLM" ]; then
+  T4_ERR="$T4_ERR provider-call-outside-src/llm:$(echo "$STRAY_LLM" | tr '\n' ',')"
+fi
+if [ -n "$T4_ERR" ]; then
+  fail "AC-T4" "natural-language query:$T4_ERR"
+else
+  pass "AC-T4"
+fi
+
+# --------------------------------------------------- AC-T5 outlier detection
+T5_ERR=""
+if [ ! -f backend/test/anomalies.test.js ]; then
+  T5_ERR="$T5_ERR no-test:backend/test/anomalies.test.js"
+elif ! run_offline_unit "AC-T5" "test/anomalies.test.js"; then
+  T5_ERR="$T5_ERR tests-failed(see .verify-tmp/test-AC-T5.log)"
+fi
+if [ ! -f e2e/tests/anomalies.spec.ts ]; then
+  T5_ERR="$T5_ERR no-e2e-spec:e2e/tests/anomalies.spec.ts"
+elif ! e2e_ran "anomalies\.spec\.ts"; then
+  T5_ERR="$T5_ERR e2e-spec-never-ran"
+fi
+grep -rq "anomalies" backend/src/routes ||
+  T5_ERR="$T5_ERR no-anomalies-route"
+if [ -n "$T5_ERR" ]; then
+  fail "AC-T5" "outlier detection:$T5_ERR"
+else
+  pass "AC-T5"
+fi
+
+# -------------------------------------------------------- AC-T6 cookie auth
+T6_ERR=""
+if [ ! -f backend/test/cookie-auth.test.js ]; then
+  T6_ERR="$T6_ERR no-test:backend/test/cookie-auth.test.js"
+elif ! run_offline_unit "AC-T6" "test/cookie-auth.test.js"; then
+  T6_ERR="$T6_ERR tests-failed(see .verify-tmp/test-AC-T6.log)"
+fi
+# The browser must not keep the token anywhere a script can read it.
+WEB_STORAGE="$(grep -rnE "localStorage|sessionStorage" frontend/src 2>/dev/null)"
+if [ -n "$WEB_STORAGE" ]; then
+  T6_ERR="$T6_ERR web-storage-used:$(echo "$WEB_STORAGE" | head -n1 | cut -c1-60)"
+fi
+grep -rqE "credentials:[[:space:]]*['\"]include['\"]" frontend/src ||
+  T6_ERR="$T6_ERR frontend-does-not-send-credentials"
+grep -riq "httponly" backend/src || T6_ERR="$T6_ERR cookie-not-httponly"
+grep -riq "samesite=lax" backend/src || T6_ERR="$T6_ERR cookie-not-samesite-lax"
+# A credentialed CORS response may never be a wildcard.
+if grep -rnE "['\"]Access-Control-Allow-Origin['\"][^)]*\*|origin:[[:space:]]*['\"]\*['\"]" \
+  backend/src >/dev/null 2>&1; then
+  T6_ERR="$T6_ERR wildcard-cors-with-credentials"
+fi
+if [ -n "$T6_ERR" ]; then
+  fail "AC-T6" "cookie auth:$T6_ERR"
+else
+  pass "AC-T6"
+fi
+
+# ---------------------------------------------------- AC-T7 auth rate limit
+T7_ERR=""
+if [ ! -f backend/test/rate-limit.test.js ]; then
+  T7_ERR="$T7_ERR no-test:backend/test/rate-limit.test.js"
+elif ! run_offline_unit "AC-T7" "test/rate-limit.test.js"; then
+  T7_ERR="$T7_ERR tests-failed(see .verify-tmp/test-AC-T7.log)"
+fi
+grep -q "AUTH_RATE_LIMIT_PER_MIN" backend/src/config.js ||
+  T7_ERR="$T7_ERR limit-not-configurable"
+grep -qE "^AUTH_RATE_LIMIT_PER_MIN=" .env.example ||
+  T7_ERR="$T7_ERR not-documented-in-.env.example"
+if [ -n "$T7_ERR" ]; then
+  fail "AC-T7" "auth rate limit:$T7_ERR"
+else
+  pass "AC-T7"
+fi
+
+# ------------------------------------------- AC-T8 frontend component tests
+T8_ERR=""
+if ! node -e "
+  const pkg = require('./frontend/package.json');
+  process.exit(pkg.scripts && pkg.scripts.test ? 0 : 1);
+" 2>/dev/null; then
+  T8_ERR="$T8_ERR no-test-script-in-frontend"
+elif ! (cd frontend && npm test) >"$TMP/test-frontend.log" 2>&1; then
+  T8_ERR="$T8_ERR vitest-failed(see .verify-tmp/test-frontend.log)"
+fi
+# One file per surface named in the criterion, and each must drive a real user
+# event rather than assert that the component merely rendered.
+for surface in upload filter ask anomal; do
+  SURFACE_FILE="$(find frontend/src -iname "*${surface}*.test.tsx" 2>/dev/null | head -n1)"
+  if [ -z "$SURFACE_FILE" ]; then
+    T8_ERR="$T8_ERR no-test-file-for:$surface"
+  elif ! grep -qE "userEvent|fireEvent" "$SURFACE_FILE"; then
+    T8_ERR="$T8_ERR no-user-interaction-in:$SURFACE_FILE"
+  fi
+done
+if [ -n "$T8_ERR" ]; then
+  fail "AC-T8" "frontend component tests:$T8_ERR"
+else
+  pass "AC-T8"
+fi
 
 # ---------------------------------------------------------------------- result
 echo
