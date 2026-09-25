@@ -6,6 +6,7 @@ import { healthRouter } from './routes/health.js';
 import { authRouter } from './routes/auth.js';
 import { datasetsRouter } from './routes/datasets.js';
 import { createProvider } from './llm/provider.js';
+import { createRateLimiter } from './auth/rateLimit.js';
 
 /**
  * Body-parser reports its own failures with a `type` field and no error code
@@ -47,14 +48,25 @@ function corsOrigin(allowed) {
 }
 
 /**
- * `deps` exists so the model provider can be swapped for a double in tests.
- * It is the only seam: application behaviour never branches on NODE_ENV, and
- * with `deps` omitted the app builds exactly what production would.
+ * `deps` exists so the model provider can be swapped for a double and the
+ * rate limiter's clock can be moved in tests. Those are the only seams:
+ * application behaviour never branches on NODE_ENV, and with `deps` omitted
+ * the app builds exactly what production would.
  */
 export function createApp(config, db, deps = {}) {
   const app = express();
   app.disable('x-powered-by');
   const llm = deps.llm === undefined ? createProvider(config) : deps.llm;
+  // Behind a proxy every request arrives from the proxy's address, so without
+  // this all clients would share one rate-limit budget. Trusting more hops
+  // than really exist would let a client pick its own IP via X-Forwarded-For.
+  if (config.trustProxy > 0) app.set('trust proxy', config.trustProxy);
+  // Built here, per app, so no two apps (or test files) share counters.
+  const authLimiter = createRateLimiter({
+    limit: config.authRateLimitPerMin,
+    windowMs: 60_000,
+    now: deps.now ?? Date.now,
+  });
 
   app.use(
     cors({
@@ -71,7 +83,7 @@ export function createApp(config, db, deps = {}) {
   );
 
   app.use('/api', healthRouter(db));
-  app.use('/api', authRouter(config, db));
+  app.use('/api', authRouter(config, db, authLimiter));
   app.use('/api', datasetsRouter(config, db, llm));
 
   app.use(notFoundHandler());

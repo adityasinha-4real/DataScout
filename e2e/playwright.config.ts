@@ -35,6 +35,11 @@ export default defineConfig({
         PORT: String(API_PORT),
         DATABASE_URL: ':memory:',
         CORS_ORIGIN: WEB_URL,
+        // Every spec signs in from 127.0.0.1 against this one server, which
+        // already comes close to the default of 10 a minute. The limiter has
+        // its own suite (backend/test/rate-limit.test.js); here it would only
+        // turn an unrelated new spec into a mysterious 429.
+        AUTH_RATE_LIMIT_PER_MIN: '1000',
         JWT_SECRET:
           process.env.JWT_SECRET ?? 'e2e-only-secret-value-at-least-32-characters',
       },

@@ -137,6 +137,24 @@ clears the cookie.
   `localhost:5173` with `localhost:4000`, not `localhost` with `127.0.0.1`.
 - `Secure` cookies are only sent over HTTPS, so run production behind TLS.
 
+### Sign-in rate limit and proxies
+
+`POST /api/auth/login` and `/api/auth/register` share a per-IP budget of
+`AUTH_RATE_LIMIT_PER_MIN` requests (default 10) in any sliding 60-second
+window. The next request gets `429 RATE_LIMITED` with `Retry-After` in whole
+seconds. Other routes, including logout, are never limited. Counters live in
+memory in each process, so they reset on restart and are not shared across
+replicas.
+
+The client IP comes from the socket unless `TRUST_PROXY` is set:
+
+- `TRUST_PROXY=0` (default): `X-Forwarded-For` is ignored, so a client cannot
+  pick its own IP to escape the limit. Correct when clients connect directly.
+- `TRUST_PROXY=N`: trust the last N proxy hops. Set `1` behind a single load
+  balancer or platform router; otherwise every client appears as the proxy's
+  IP and all share one budget. Never set it higher than the real number of
+  hops, or clients can forge the header.
+
 ## Project layout
 
 ```

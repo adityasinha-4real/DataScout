@@ -53,6 +53,18 @@ function origins(name, fallback) {
   return list;
 }
 
+/** Like integer(), but 0 is allowed: used where 0 means "off". */
+function nonNegativeInteger(name, fallback) {
+  const raw = optional(name, String(fallback));
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new ConfigError(
+      `Environment variable ${name} must be a non-negative integer, got "${raw}".`,
+    );
+  }
+  return parsed;
+}
+
 export function loadConfig(env = process.env) {
   const previous = process.env;
   process.env = env;
@@ -80,6 +92,10 @@ export function loadConfig(env = process.env) {
       jwtExpiresIn: integer('JWT_EXPIRES_IN', 3600),
       corsOrigins: origins('CORS_ORIGIN', 'http://localhost:5173'),
       maxUploadBytes: integer('MAX_UPLOAD_BYTES', 10 * 1024 * 1024),
+      authRateLimitPerMin: integer('AUTH_RATE_LIMIT_PER_MIN', 10),
+      // Reverse-proxy hops to trust for the client IP. 0 (default) means the
+      // socket address is the client and X-Forwarded-For is ignored.
+      trustProxy: nonNegativeInteger('TRUST_PROXY', 0),
       // Optional on purpose: without a key /ask answers 503 and every other
       // route keeps working, so the app is useful with no model configured.
       anthropicApiKey: optional('ANTHROPIC_API_KEY', ''),

@@ -31,10 +31,15 @@ const publicUser = (row) => ({
   createdAt: row.created_at ?? row.createdAt,
 });
 
-export function authRouter(config, db) {
+/**
+ * `limiter` guards register and login only: they are the endpoints where a
+ * guess costs an attacker nothing but a request. Both draw on one per-IP
+ * budget, so alternating between them buys no extra attempts.
+ */
+export function authRouter(config, db, limiter = (req, res, next) => next()) {
   const router = Router();
 
-  router.post('/auth/register', (req, res) => {
+  router.post('/auth/register', limiter, (req, res) => {
     const { email, password } = validate(credentials, req.body);
     const normalized = email.toLowerCase();
 
@@ -64,7 +69,7 @@ export function authRouter(config, db) {
     });
   });
 
-  router.post('/auth/login', (req, res) => {
+  router.post('/auth/login', limiter, (req, res) => {
     const { email, password } = validate(credentials, req.body);
     const row = db
       .prepare('SELECT * FROM users WHERE email = ?')
