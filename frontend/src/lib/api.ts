@@ -1,4 +1,5 @@
 import type {
+  AnomaliesResponse,
   ApiErrorBody,
   AskResponse,
   AuthResponse,
@@ -88,6 +89,7 @@ export interface RowsQuery {
   rankBy?: string;
   page?: number;
   pageSize?: number;
+  anomaliesOnly?: boolean;
 }
 
 function toSearch(query: RowsQuery): string {
@@ -98,6 +100,7 @@ function toSearch(query: RowsQuery): string {
   if (query.rankBy) params.set('rankBy', query.rankBy);
   if (query.page) params.set('page', String(query.page));
   if (query.pageSize) params.set('pageSize', String(query.pageSize));
+  if (query.anomaliesOnly) params.set('anomaliesOnly', 'true');
   const search = params.toString();
   return search === '' ? '' : `?${search}`;
 }
@@ -134,6 +137,9 @@ export const api = {
       `/api/datasets/${id}/profile`,
       { token },
     ),
+
+  getAnomalies: (token: string, id: string) =>
+    request<AnomaliesResponse>(`/api/datasets/${id}/anomalies`, { token }),
 
   getRows: (token: string, id: string, query: RowsQuery) =>
     request<RowsPage>(`/api/datasets/${id}/rows${toSearch(query)}`, { token }),

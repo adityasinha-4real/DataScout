@@ -53,7 +53,8 @@ export interface DatasetProfile {
 export interface RowsPage {
   datasetId: string;
   columns: string[];
-  rows: { row: string[]; rank: number | null }[];
+  /** `index` is the row's 0-based position in the uploaded file. */
+  rows: { row: string[]; rank: number | null; index: number }[];
   total: number;
   page: number;
   pageSize: number;
@@ -86,4 +87,22 @@ export interface ApiErrorBody {
     message: string;
     details?: { field: string; message: string }[];
   };
+}
+
+/** One flagged cell: which rule(s) put it outside the expected range. */
+export interface AnomalyFlag {
+  row: number;
+  value: number;
+  rules: ('iqr' | 'robustZ')[];
+}
+
+export interface ColumnAnomalies {
+  column: string;
+  insufficientData: boolean;
+  flagged: AnomalyFlag[];
+}
+
+export interface AnomaliesResponse {
+  datasetId: string;
+  columns: ColumnAnomalies[];
 }

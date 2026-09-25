@@ -1,10 +1,29 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
+import { AnomalyToggle } from '../components/AnomalyToggle';
 import { AskBox } from '../components/AskBox';
 import { api, ApiError, type RowsQuery } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import type { DatasetProfile, DatasetSummary, RowsPage } from '../lib/types';
+import type {
+  ColumnAnomalies,
+  DatasetProfile,
+  DatasetSummary,
+  RowsPage,
+} from '../lib/types';
+
+/** rowIndex → column name → the rules that flagged that cell. */
+function indexAnomalies(columns: ColumnAnomalies[]) {
+  const byRow = new Map<number, Map<string, string[]>>();
+  for (const column of columns) {
+    for (const flag of column.flagged) {
+      const cells = byRow.get(flag.row) ?? new Map<string, string[]>();
+      cells.set(column.column, flag.rules);
+      byRow.set(flag.row, cells);
+    }
+  }
+  return byRow;
+}
 
 const OPERATORS = [
   'eq',
@@ -35,6 +54,10 @@ export function DatasetPage() {
   const [rankBy, setRankBy] = useState('');
   const [pageNumber, setPageNumber] = useState(1);
   const [exported, setExported] = useState<number | null>(null);
+  const [anomalies, setAnomalies] = useState<ColumnAnomalies[] | null>(null);
+  const [anomaliesOnly, setAnomaliesOnly] = useState(false);
+
+  const flaggedCells = useMemo(() => indexAnomalies(anomalies ?? []), [anomalies]);
 
   // Memoised so it can be a stable effect dependency rather than a new object
   // on every render.
@@ -44,16 +67,22 @@ export function DatasetPage() {
       rankBy: rankBy || undefined,
       page: pageNumber,
       pageSize: 25,
+      anomaliesOnly,
     }),
-    [applied, rankBy, pageNumber],
+    [applied, rankBy, pageNumber, anomaliesOnly],
   );
 
   useEffect(() => {
     if (!token || !id) return;
-    Promise.all([api.getDataset(token, id), api.getProfile(token, id)])
-      .then(([summary, profileResult]) => {
+    Promise.all([
+      api.getDataset(token, id),
+      api.getProfile(token, id),
+      api.getAnomalies(token, id),
+    ])
+      .then(([summary, profileResult, anomalyResult]) => {
         setDataset(summary.dataset);
         setProfile(profileResult.profile);
+        setAnomalies(anomalyResult.columns);
         setColumn((current) => current || (summary.dataset.columns[0] ?? ''));
       })
       .catch((err: unknown) =>
@@ -238,6 +267,15 @@ export function DatasetPage() {
           </button>
         </div>
 
+        <AnomalyToggle
+          flaggedRows={anomalies === null ? null : flaggedCells.size}
+          checked={anomaliesOnly}
+          onChange={(checked) => {
+            setAnomaliesOnly(checked);
+            setPageNumber(1);
+          }}
+        />
+
         {applied.length > 0 && (
           <ul className="chips" data-testid="active-filters">
             {applied.map((filter) => (
@@ -285,12 +323,25 @@ export function DatasetPage() {
                 </tr>
               </thead>
               <tbody>
-                {page.rows.map((entry, index) => (
-                  <tr key={`${entry.row.join('|')}-${index}`} data-testid="row">
+                {page.rows.map((entry) => (
+                  <tr key={entry.index} data-testid="row">
                     {rankBy && <td data-testid="rank-cell">{entry.rank}</td>}
-                    {entry.row.map((cell, cellIndex) => (
-                      <td key={`${page.columns[cellIndex] ?? cellIndex}`}>{cell}</td>
-                    ))}
+                    {entry.row.map((cell, cellIndex) => {
+                      const name = page.columns[cellIndex] ?? String(cellIndex);
+                      const rules = flaggedCells.get(entry.index)?.get(name);
+                      return rules ? (
+                        <td
+                          key={name}
+                          className="anomaly"
+                          data-testid="anomaly-cell"
+                          title={`Outlier (${rules.join(', ')})`}
+                        >
+                          {cell}
+                        </td>
+                      ) : (
+                        <td key={name}>{cell}</td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>

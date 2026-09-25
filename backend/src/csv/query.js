@@ -147,11 +147,22 @@ export function parseFilter(spec) {
 /**
  * @param {{columns: string[], rows: string[][]}} dataset
  * @param {{filters?: string[], sort?: string, direction?: string,
- *          rankBy?: string, page?: number, pageSize?: number}} query
+ *          rankBy?: string, page?: number, pageSize?: number,
+ *          onlyRows?: Set<number>}} query
+ *
+ * Each result entry carries `index`, the row's 0-based position in the
+ * dataset, so a client can line rows up with per-row data such as anomalies.
+ * `onlyRows` restricts the result to those source indexes before filtering.
  */
 export function queryRows(dataset, query = {}) {
-  const { columns, rows } = dataset;
-  let result = rows;
+  const { columns } = dataset;
+  const sourceIndex = new Map(dataset.rows.map((row, index) => [row, index]));
+  let result = dataset.rows;
+
+  if (query.onlyRows) {
+    const only = query.onlyRows;
+    result = result.filter((row) => only.has(sourceIndex.get(row)));
+  }
 
   for (const spec of query.filters ?? []) {
     const { column, operator, value } = parseFilter(spec);
@@ -172,16 +183,20 @@ export function queryRows(dataset, query = {}) {
         rank += 1;
         previous = value;
       }
-      return { row, rank };
+      return { row, rank, index: sourceIndex.get(row) };
     });
   } else if (query.sort) {
     const index = columnIndex(columns, query.sort);
     const direction = query.direction === 'desc' ? -1 : 1;
     result = [...result]
       .sort((a, b) => orderBy(a[index], b[index], direction))
-      .map((row) => ({ row, rank: null }));
+      .map((row) => ({ row, rank: null, index: sourceIndex.get(row) }));
   } else {
-    result = result.map((row) => ({ row, rank: null }));
+    result = result.map((row) => ({
+      row,
+      rank: null,
+      index: sourceIndex.get(row),
+    }));
   }
 
   const total = result.length;

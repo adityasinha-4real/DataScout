@@ -142,6 +142,13 @@ export function validateAgainstSchema(value, schema, path = 'spec') {
  * by another name. Whatever a CSV contains, it cannot reach the prompt and
  * cannot instruct the model.
  */
+/**
+ * The statistics that may be copied into the prompt, named one by one. Copying
+ * `column.stats` wholesale would let any field later attached to a profile —
+ * an anomaly list, say — flow to the model without anyone deciding it should.
+ */
+const PROMPT_STATS = ['min', 'max', 'mean', 'median', 'stddev', 'sum'];
+
 export function describeColumns(profile) {
   return profile.columns.map((column) => {
     const described = {
@@ -151,7 +158,14 @@ export function describeColumns(profile) {
       unique: column.unique,
       operators: OPERATORS_BY_TYPE[column.type] ?? [],
     };
-    if (column.stats) described.stats = column.stats;
+    if (column.stats) {
+      described.stats = Object.fromEntries(
+        PROMPT_STATS.filter((key) => key in column.stats).map((key) => [
+          key,
+          column.stats[key],
+        ]),
+      );
+    }
     return described;
   });
 }

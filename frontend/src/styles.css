@@ -222,3 +222,12 @@ th {
   letter-spacing: 0.04em;
   color: var(--muted);
 }
+
+/* A flagged cell is marked by weight and an outline as well as colour, so the
+   highlight survives for readers who cannot tell the warning hue apart. */
+td.anomaly {
+  color: var(--warning);
+  font-weight: 700;
+  outline: 2px solid var(--warning);
+  outline-offset: -2px;
+}
