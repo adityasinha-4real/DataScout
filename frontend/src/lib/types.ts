@@ -60,6 +60,26 @@ export interface RowsPage {
   pageCount: number;
 }
 
+/** What the model is allowed to produce: operations the engine already has. */
+export interface QuerySpecFilter {
+  column: string;
+  operator: string;
+  value?: string;
+}
+
+export interface QuerySpec {
+  filters?: QuerySpecFilter[];
+  sort?: string;
+  direction?: 'asc' | 'desc';
+  rankBy?: string;
+  limit?: number;
+}
+
+export interface AskResponse extends RowsPage {
+  spec: QuerySpec;
+  explanation: string;
+}
+
 export interface ApiErrorBody {
   error: {
     code: string;

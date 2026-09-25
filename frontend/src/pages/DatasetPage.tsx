@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
+import { AskBox } from '../components/AskBox';
 import { api, ApiError, type RowsQuery } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import type { DatasetProfile, DatasetSummary, RowsPage } from '../lib/types';
@@ -158,6 +159,18 @@ export function DatasetPage() {
           </table>
         </section>
       )}
+
+      <AskBox
+        onAsk={async (question) => {
+          if (!token || !id) throw new Error('Not signed in.');
+          return api.ask(token, id, question);
+        }}
+        onApply={(filters, rank) => {
+          setApplied(filters);
+          setRankBy(rank);
+          setPageNumber(1);
+        }}
+      />
 
       <section>
         <h2>Rows</h2>

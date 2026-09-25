@@ -1,5 +1,6 @@
 import type {
   ApiErrorBody,
+  AskResponse,
   AuthResponse,
   DatasetProfile,
   DatasetSummary,
@@ -136,6 +137,13 @@ export const api = {
 
   getRows: (token: string, id: string, query: RowsQuery) =>
     request<RowsPage>(`/api/datasets/${id}/rows${toSearch(query)}`, { token }),
+
+  ask: (token: string, id: string, question: string) =>
+    request<AskResponse>(`/api/datasets/${id}/ask`, {
+      method: 'POST',
+      token,
+      json: { question },
+    }),
 
   exportCsv: (token: string, id: string, query: RowsQuery) =>
     request<string>(`/api/datasets/${id}/export${toSearch(query)}`, {
