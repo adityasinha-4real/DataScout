@@ -7,17 +7,17 @@ import { DatasetsPage } from './pages/DatasetsPage';
 import { DatasetPage } from './pages/DatasetPage';
 
 function RequireAuth({ children }: { children: ReactElement }) {
-  const { token, ready } = useAuth();
-  // Wait for the stored-token check before deciding, otherwise a reload would
+  const { user, ready } = useAuth();
+  // Wait for the session check before deciding, otherwise a reload would
   // bounce a signed-in user back to the login screen.
   if (!ready) return <p className="muted centered">Loading…</p>;
-  return token ? children : <Navigate to="/" replace />;
+  return user ? children : <Navigate to="/" replace />;
 }
 
 function LandingRoute() {
-  const { token, ready } = useAuth();
+  const { user, ready } = useAuth();
   if (!ready) return <p className="muted centered">Loading…</p>;
-  return token ? <Navigate to="/datasets" replace /> : <LoginPage />;
+  return user ? <Navigate to="/datasets" replace /> : <LoginPage />;
 }
 
 export function App() {

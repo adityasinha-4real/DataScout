@@ -4,7 +4,6 @@ import { Link, useParams } from 'react-router-dom';
 import { AnomalyToggle } from '../components/AnomalyToggle';
 import { AskBox } from '../components/AskBox';
 import { api, ApiError, type RowsQuery } from '../lib/api';
-import { useAuth } from '../lib/auth';
 import type {
   ColumnAnomalies,
   DatasetProfile,
@@ -39,7 +38,6 @@ const OPERATORS = [
 ] as const;
 
 export function DatasetPage() {
-  const { token } = useAuth();
   const { id = '' } = useParams<{ id: string }>();
 
   const [dataset, setDataset] = useState<DatasetSummary | null>(null);
@@ -73,11 +71,11 @@ export function DatasetPage() {
   );
 
   useEffect(() => {
-    if (!token || !id) return;
+    if (!id) return;
     Promise.all([
-      api.getDataset(token, id),
-      api.getProfile(token, id),
-      api.getAnomalies(token, id),
+      api.getDataset(id),
+      api.getProfile(id),
+      api.getAnomalies(id),
     ])
       .then(([summary, profileResult, anomalyResult]) => {
         setDataset(summary.dataset);
@@ -88,17 +86,17 @@ export function DatasetPage() {
       .catch((err: unknown) =>
         setError(err instanceof ApiError ? err.message : 'Could not load dataset.'),
       );
-  }, [token, id]);
+  }, [id]);
 
   const loadRows = useCallback(async () => {
-    if (!token || !id) return;
+    if (!id) return;
     try {
-      setPage(await api.getRows(token, id, query));
+      setPage(await api.getRows(id, query));
       setError(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load rows.');
     }
-  }, [token, id, query]);
+  }, [id, query]);
 
   useEffect(() => {
     void loadRows();
@@ -117,9 +115,9 @@ export function DatasetPage() {
   }
 
   async function onExport() {
-    if (!token || !id) return;
+    if (!id) return;
     try {
-      const csv = await api.exportCsv(token, id, { ...query, page: undefined });
+      const csv = await api.exportCsv(id, { ...query, page: undefined });
       // Count data rows, not the header line.
       setExported(csv.trim().split(/\r?\n/).length - 1);
     } catch (err) {
@@ -191,8 +189,8 @@ export function DatasetPage() {
 
       <AskBox
         onAsk={async (question) => {
-          if (!token || !id) throw new Error('Not signed in.');
-          return api.ask(token, id, question);
+          if (!id) throw new Error('No dataset selected.');
+          return api.ask(id, question);
         }}
         onApply={(filters, rank) => {
           setApplied(filters);

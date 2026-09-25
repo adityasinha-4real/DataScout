@@ -34,6 +34,25 @@ function integer(name, fallback) {
   return parsed;
 }
 
+/**
+ * Comma-separated list of exact origins. A wildcard is refused outright: the
+ * API sends credentials, and browsers reject `*` with credentials anyway, so
+ * accepting it would only defer the failure to the first cross-origin call.
+ */
+function origins(name, fallback) {
+  const list = optional(name, fallback)
+    .split(',')
+    .map((origin) => origin.trim().replace(/\/+$/, ''))
+    .filter((origin) => origin !== '');
+  if (list.length === 0 || list.includes('*')) {
+    throw new ConfigError(
+      `Environment variable ${name} must list exact origins, not "*": ` +
+        'the API sends credentials, which browsers never allow with a wildcard.',
+    );
+  }
+  return list;
+}
+
 export function loadConfig(env = process.env) {
   const previous = process.env;
   process.env = env;
@@ -59,7 +78,7 @@ export function loadConfig(env = process.env) {
       databaseUrl: optional('DATABASE_URL', './data/datascout.db'),
       jwtSecret,
       jwtExpiresIn: integer('JWT_EXPIRES_IN', 3600),
-      corsOrigin: optional('CORS_ORIGIN', 'http://localhost:5173'),
+      corsOrigins: origins('CORS_ORIGIN', 'http://localhost:5173'),
       maxUploadBytes: integer('MAX_UPLOAD_BYTES', 10 * 1024 * 1024),
       // Optional on purpose: without a key /ask answers 503 and every other
       // route keeps working, so the app is useful with no model configured.

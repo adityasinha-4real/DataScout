@@ -33,6 +33,20 @@ function normalizeBodyErrors() {
 }
 
 /**
+ * Credentialed CORS against an explicit allowlist. An allowed browser origin
+ * is echoed back; any other origin gets no Access-Control-Allow-Origin at all,
+ * so the browser withholds the response. A request with no Origin header is
+ * not from a browser page and has nothing to protect against, so it gets the
+ * primary origin, as it did before the allowlist existed.
+ */
+function corsOrigin(allowed) {
+  return (origin, callback) => {
+    if (!origin) return callback(null, allowed[0]);
+    return callback(null, allowed.includes(origin) ? origin : false);
+  };
+}
+
+/**
  * `deps` exists so the model provider can be swapped for a double in tests.
  * It is the only seam: application behaviour never branches on NODE_ENV, and
  * with `deps` omitted the app builds exactly what production would.
@@ -42,7 +56,12 @@ export function createApp(config, db, deps = {}) {
   app.disable('x-powered-by');
   const llm = deps.llm === undefined ? createProvider(config) : deps.llm;
 
-  app.use(cors({ origin: config.corsOrigin }));
+  app.use(
+    cors({
+      origin: corsOrigin(config.corsOrigins),
+      credentials: true,
+    }),
+  );
   app.use(express.json({ limit: '1mb' }));
   app.use(
     express.text({

@@ -38,7 +38,6 @@ function isErrorBody(value: unknown): value is ApiErrorBody {
 
 interface RequestOptions {
   method?: string;
-  token?: string | null;
   json?: unknown;
   csv?: string;
   accept?: 'json' | 'text';
@@ -55,12 +54,14 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     headers['Content-Type'] = 'text/csv';
     body = options.csv;
   }
-  if (options.token) headers.Authorization = `Bearer ${options.token}`;
-
+  // The session is an HttpOnly cookie the server sets at login. This client
+  // never sees or stores the token; it just asks the browser to send the
+  // cookie along, which a cross-origin fetch only does with 'include'.
   const response = await fetch(`${BASE_URL}${path}`, {
     method: options.method ?? 'GET',
     headers,
     body,
+    credentials: 'include',
   });
 
   const raw = await response.text();
@@ -118,45 +119,42 @@ export const api = {
       json: { email, password },
     }),
 
-  me: (token: string) => request<{ user: AuthResponse['user'] }>('/api/auth/me', { token }),
+  me: () => request<{ user: AuthResponse['user'] }>('/api/auth/me'),
 
-  listDatasets: (token: string) =>
-    request<{ datasets: DatasetSummary[] }>('/api/datasets', { token }),
+  logout: () => request<null>('/api/auth/logout', { method: 'POST' }),
 
-  uploadDataset: (token: string, name: string, csv: string) =>
+  listDatasets: () =>
+    request<{ datasets: DatasetSummary[] }>('/api/datasets'),
+
+  uploadDataset: (name: string, csv: string) =>
     request<{ dataset: DatasetSummary }>(
       `/api/datasets?name=${encodeURIComponent(name)}`,
-      { method: 'POST', token, csv },
+      { method: 'POST', csv },
     ),
 
-  getDataset: (token: string, id: string) =>
-    request<{ dataset: DatasetSummary }>(`/api/datasets/${id}`, { token }),
+  getDataset: (id: string) =>
+    request<{ dataset: DatasetSummary }>(`/api/datasets/${id}`),
 
-  getProfile: (token: string, id: string) =>
-    request<{ datasetId: string; profile: DatasetProfile }>(
-      `/api/datasets/${id}/profile`,
-      { token },
-    ),
+  getProfile: (id: string) =>
+    request<{ datasetId: string; profile: DatasetProfile }>(`/api/datasets/${id}/profile`),
 
-  getAnomalies: (token: string, id: string) =>
-    request<AnomaliesResponse>(`/api/datasets/${id}/anomalies`, { token }),
+  getAnomalies: (id: string) =>
+    request<AnomaliesResponse>(`/api/datasets/${id}/anomalies`),
 
-  getRows: (token: string, id: string, query: RowsQuery) =>
-    request<RowsPage>(`/api/datasets/${id}/rows${toSearch(query)}`, { token }),
+  getRows: (id: string, query: RowsQuery) =>
+    request<RowsPage>(`/api/datasets/${id}/rows${toSearch(query)}`),
 
-  ask: (token: string, id: string, question: string) =>
+  ask: (id: string, question: string) =>
     request<AskResponse>(`/api/datasets/${id}/ask`, {
       method: 'POST',
-      token,
       json: { question },
     }),
 
-  exportCsv: (token: string, id: string, query: RowsQuery) =>
+  exportCsv: (id: string, query: RowsQuery) =>
     request<string>(`/api/datasets/${id}/export${toSearch(query)}`, {
-      token,
       accept: 'text',
     }),
 
-  deleteDataset: (token: string, id: string) =>
-    request<null>(`/api/datasets/${id}`, { method: 'DELETE', token }),
+  deleteDataset: (id: string) =>
+    request<null>(`/api/datasets/${id}`, { method: 'DELETE' }),
 };

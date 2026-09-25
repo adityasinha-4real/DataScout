@@ -66,7 +66,8 @@ bash scripts/verify.sh
 
 ## API
 
-All dataset routes require an `Authorization: Bearer <token>` header. Every
+All dataset routes require the session cookie set at sign-in, or an
+`Authorization: Bearer <token>` header. Every
 error response has the shape `{ "error": { "code": "...", "message": "..." } }`.
 
 | Method   | Path                        | Purpose                                     |
@@ -75,12 +76,15 @@ error response has the shape `{ "error": { "code": "...", "message": "..." } }`.
 | `POST`   | `/api/auth/register`        | Create an account, returns a token           |
 | `POST`   | `/api/auth/login`           | Exchange credentials for a token             |
 | `GET`    | `/api/auth/me`              | The current user                             |
+| `POST`   | `/api/auth/logout`          | Clear the session cookie (204)               |
 | `POST`   | `/api/datasets?name=`       | Upload CSV as `Content-Type: text/csv`       |
 | `GET`    | `/api/datasets`             | List your datasets                           |
 | `GET`    | `/api/datasets/:id`         | One dataset's summary                        |
 | `GET`    | `/api/datasets/:id/profile` | Per-column type inference and statistics     |
 | `GET`    | `/api/datasets/:id/rows`    | Filter, sort, rank and paginate rows         |
 | `GET`    | `/api/datasets/:id/export`  | Every matching row as CSV                    |
+| `GET`    | `/api/datasets/:id/anomalies` | Outliers per numeric column (IQR, robust z) |
+| `POST`   | `/api/datasets/:id/ask`     | Plain-English question → validated query     |
 | `DELETE` | `/api/datasets/:id`         | Delete a dataset                             |
 
 ### Querying rows
@@ -115,6 +119,23 @@ Every variable the code reads is documented in [.env.example](.env.example).
 `JWT_SECRET` is required; the server refuses to boot without it rather than
 failing later on a request. The frontend reads its API origin from
 `VITE_API_BASE_URL` at build time — there is no hardcoded fallback.
+
+### Sessions and origins
+
+Signing in sets an `HttpOnly; SameSite=Lax; Path=/` cookie (plus `Secure` when
+`NODE_ENV=production`), and the browser client authenticates with that cookie
+alone — it never stores the token. API clients can still send
+`Authorization: Bearer <token>` from the login response. `POST /api/auth/logout`
+clears the cookie.
+
+- `CORS_ORIGIN` must name the frontend's exact origin(s); a wildcard is refused.
+- The frontend and the API must be on the **same registrable domain**
+  (`app.example.com` + `api.example.com` works; `something.vercel.app` +
+  `api.fly.dev` does not). Browsers never attach a `SameSite=Lax` cookie to a
+  cross-site `fetch`, so a split-domain deployment signs in and then gets 401
+  on every request. Locally, use the same host name on both sides:
+  `localhost:5173` with `localhost:4000`, not `localhost` with `127.0.0.1`.
+- `Secure` cookies are only sent over HTTPS, so run production behind TLS.
 
 ## Project layout
 
