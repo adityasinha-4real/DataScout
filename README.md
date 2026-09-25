@@ -47,8 +47,13 @@ which answers `{"status":"ok","db":"connected", ...}`.
 npm test --prefix backend          # unit + integration, with coverage
 npm run lint --prefix backend      # also: --prefix frontend, --prefix e2e
 npm run build --prefix frontend    # type-check + production bundle
+npm test --prefix frontend         # Vitest + Testing Library component tests (jsdom)
 npm test --prefix e2e              # Playwright smoke (boots API + preview build)
 ```
+
+The frontend tests render the real app and mock only `fetch`, so the API
+client, auth context, router and components all run as shipped. A request no
+test declared fails the test rather than being silently swallowed.
 
 The e2e suite builds the frontend and boots the API itself on private ports
 with an in-memory database, so it never touches your development data. It
