@@ -21,6 +21,13 @@ export const notFound = (message = 'Resource not found.') =>
 export const conflict = (code, message) => new AppError(409, code, message);
 export const payloadTooLarge = (message) =>
   new AppError(413, 'PAYLOAD_TOO_LARGE', message);
+/** The request was understood but cannot be carried out as asked. */
+export const unprocessable = (code, message, details) =>
+  new AppError(422, code, message, details);
+/** An upstream we depend on answered with something we cannot use. */
+export const badGateway = (code, message) => new AppError(502, code, message);
+/** A dependency is not configured or is temporarily out of service. */
+export const unavailable = (code, message) => new AppError(503, code, message);
 
 /** Express 5 error middleware. Must keep all four parameters. */
 export function errorHandler(isProduction) {

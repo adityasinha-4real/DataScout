@@ -61,6 +61,10 @@ export function loadConfig(env = process.env) {
       jwtExpiresIn: integer('JWT_EXPIRES_IN', 3600),
       corsOrigin: optional('CORS_ORIGIN', 'http://localhost:5173'),
       maxUploadBytes: integer('MAX_UPLOAD_BYTES', 10 * 1024 * 1024),
+      // Optional on purpose: without a key /ask answers 503 and every other
+      // route keeps working, so the app is useful with no model configured.
+      anthropicApiKey: optional('ANTHROPIC_API_KEY', ''),
+      llmModel: optional('LLM_MODEL', 'claude-sonnet-5'),
     };
   } finally {
     process.env = previous;
