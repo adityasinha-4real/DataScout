@@ -1,0 +1,11 @@
+node_modules
+test
+coverage
+data
+*.db
+*.db-*
+.env
+.env.*
+eslint.config.js
+Dockerfile
+.dockerignore

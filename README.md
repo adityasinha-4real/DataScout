@@ -160,10 +160,53 @@ The client IP comes from the socket unless `TRUST_PROXY` is set:
   IP and all share one budget. Never set it higher than the real number of
   hops, or clients can forge the header.
 
+## Deployment
+
+Nothing here deploys anything; these are the steps and the constraints.
+
+**The one hard constraint:** the session cookie is `SameSite=Lax`, so the
+frontend and the API must share a registrable domain — for example
+`app.example.com` (Vercel) and `api.example.com` (the container). A
+`*.vercel.app` frontend talking to an API on another domain will sign in and
+then get 401 on every request. The same applies to Vercel preview deployments
+on `*.vercel.app` URLs: they cannot hold a session against the production API.
+
+### API: Docker
+
+```bash
+docker build -t datascout-api backend
+docker run -d --name datascout-api -p 4000:4000   -v datascout-data:/data   -e JWT_SECRET="$(openssl rand -hex 48)"   -e CORS_ORIGIN=https://app.example.com   -e TRUST_PROXY=1   datascout-api
+```
+
+- The image sets `NODE_ENV=production`, so cookies are `Secure`: serve the API
+  over HTTPS (a platform router or a TLS-terminating proxy in front).
+- The database is `/data/datascout.db` on the `datascout-data` volume. Replace
+  the container freely; keep the volume. Back it up by copying that file while
+  the container is stopped.
+- SQLite means **one** API instance. Do not run replicas against the same
+  volume, and note the sign-in rate limit is per process too.
+- `TRUST_PROXY=1` when exactly one proxy sits in front (the usual case on a
+  hosting platform); `0` if clients connect straight to the container.
+- Runs as the unprivileged `node` user, with a `HEALTHCHECK` on `/api/health`.
+- Set `ANTHROPIC_API_KEY` (and optionally `LLM_MODEL`) to enable "Ask a
+  question"; without it `/ask` answers 503 and everything else works.
+
+### Frontend: Vercel
+
+1. Import the repo and set **Root Directory** to `frontend`. Vercel detects
+   Vite: build `npm run build`, output `dist`.
+2. Add the environment variable `VITE_API_BASE_URL=https://api.example.com`.
+   It is read at **build** time, so redeploy after changing it.
+3. Attach the custom domain (`app.example.com`), and set the API's
+   `CORS_ORIGIN` to exactly that origin.
+
+`frontend/vercel.json` rewrites unknown paths to `index.html`, so a refresh on
+a client-side route such as `/datasets/<id>` loads the app instead of a 404.
+
 ## Project layout
 
 ```
-backend/    Express API, CSV engine, SQLite persistence
+backend/    Express API, CSV engine, SQLite persistence (Dockerfile)
   src/csv/  parse, profile and query — framework-free and unit tested
 frontend/   React + TypeScript client
 e2e/        Playwright smoke test of the primary user flow
