@@ -108,6 +108,19 @@ for path in "${PATHS[@]}"; do
     echo "  ok  $path ($label)"
   fi
 done
+# Unfilled commit placeholders in PLAN.md's logs. Anchored to log-entry lines
+# ("- [ID] ...") and to the two forms a placeholder takes: the template's own
+# "commit <sha>" and a SHA_<ID> token. Prose, code blocks and the template
+# comment that *describe* the format never start with "- [", so documenting
+# this check cannot trip it.
+PLACEHOLDER_RE='^- \[[^]]+\] .*(\bSHA_[A-Z0-9_]+\b|commit <sha>)'
+PLAN_FILE="${GOAL_CHECK_PLAN:-PLAN.md}"
+if grep -nE "$PLACEHOLDER_RE" "$PLAN_FILE"; then
+  echo "GOAL-CHECK FAIL: unfilled commit placeholder(s) in $PLAN_FILE (lines above)"
+  exit 1
+fi
+echo "  ok  $PLAN_FILE has no unfilled commit placeholders"
+
 [ "$FAILED" -eq 0 ] || exit 1
 
 echo "GOAL-CHECK PASS: ${#PATHS[@]} paths present at $BASE, HEAD and on disk; nothing differs from $BASE except approved edits (${#APPROVED[@]})"
