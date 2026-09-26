@@ -109,6 +109,23 @@ in either direction, so a row with no value is never the top result.
 
 `export` accepts the same parameters and ignores pagination.
 
+### Asking a question, and what the model sees
+
+`POST /api/datasets/:id/ask` sends the model the question plus a column
+catalogue: each column's name, type, missing and unique counts, the operators
+it supports, and for numeric columns `min`, `max`, `mean`, `median`, `stddev`
+and `sum`. No row, no cell text and no categorical top values are sent. The
+model answers with a query spec that is validated against the real columns
+and run by the same engine as `/rows`; nothing it returns is executed.
+
+**Known behaviour: `min` and `max` can be outlier values.** They are computed
+over every value in the column, so on a column like `10, 11, 12, 11, 95` the
+model is told `max: 95` even though `/anomalies` flags 95 as an outlier. The
+`/anomalies` result itself (which rows, which rules) is never sent, but its
+extreme values reach the model through `min`/`max`. They are parsed finite
+numbers, so they cannot carry an instruction; the exposure is the number
+alone. This was a deliberate choice to keep the AC-T4 behaviour unchanged.
+
 ## CSV handling
 
 The parser follows RFC 4180: quoted fields may contain commas, newlines and
