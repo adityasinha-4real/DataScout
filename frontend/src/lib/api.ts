@@ -1,4 +1,5 @@
 import type {
+  AnomaliesResponse,
   ApiErrorBody,
   AskResponse,
   AuthResponse,
@@ -8,9 +9,11 @@ import type {
 } from './types';
 
 /**
- * The API origin is injected at build time. There is no literal fallback on
- * purpose: shipping a build without VITE_API_BASE_URL should be loud, and a
- * hardcoded localhost would silently work in dev and break everywhere else.
+ * Blank (the normal case) means requests go to relative /api paths on the
+ * page's own origin: Vercel rewrites them to the API in production, and Vite's
+ * proxy does the same in dev and e2e. Same-origin means no CORS and a
+ * first-party session cookie. VITE_API_BASE_URL is only for a deliberate
+ * cross-origin setup, and there is still no hardcoded host to fall back on.
  */
 const BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -37,7 +40,6 @@ function isErrorBody(value: unknown): value is ApiErrorBody {
 
 interface RequestOptions {
   method?: string;
-  token?: string | null;
   json?: unknown;
   csv?: string;
   accept?: 'json' | 'text';
@@ -54,12 +56,14 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     headers['Content-Type'] = 'text/csv';
     body = options.csv;
   }
-  if (options.token) headers.Authorization = `Bearer ${options.token}`;
-
+  // The session is an HttpOnly cookie the server sets at login. This client
+  // never sees or stores the token; it just asks the browser to send the
+  // cookie along, which a cross-origin fetch only does with 'include'.
   const response = await fetch(`${BASE_URL}${path}`, {
     method: options.method ?? 'GET',
     headers,
     body,
+    credentials: 'include',
   });
 
   const raw = await response.text();
@@ -88,6 +92,7 @@ export interface RowsQuery {
   rankBy?: string;
   page?: number;
   pageSize?: number;
+  anomaliesOnly?: boolean;
 }
 
 function toSearch(query: RowsQuery): string {
@@ -98,6 +103,7 @@ function toSearch(query: RowsQuery): string {
   if (query.rankBy) params.set('rankBy', query.rankBy);
   if (query.page) params.set('page', String(query.page));
   if (query.pageSize) params.set('pageSize', String(query.pageSize));
+  if (query.anomaliesOnly) params.set('anomaliesOnly', 'true');
   const search = params.toString();
   return search === '' ? '' : `?${search}`;
 }
@@ -115,42 +121,42 @@ export const api = {
       json: { email, password },
     }),
 
-  me: (token: string) => request<{ user: AuthResponse['user'] }>('/api/auth/me', { token }),
+  me: () => request<{ user: AuthResponse['user'] }>('/api/auth/me'),
 
-  listDatasets: (token: string) =>
-    request<{ datasets: DatasetSummary[] }>('/api/datasets', { token }),
+  logout: () => request<null>('/api/auth/logout', { method: 'POST' }),
 
-  uploadDataset: (token: string, name: string, csv: string) =>
+  listDatasets: () =>
+    request<{ datasets: DatasetSummary[] }>('/api/datasets'),
+
+  uploadDataset: (name: string, csv: string) =>
     request<{ dataset: DatasetSummary }>(
       `/api/datasets?name=${encodeURIComponent(name)}`,
-      { method: 'POST', token, csv },
+      { method: 'POST', csv },
     ),
 
-  getDataset: (token: string, id: string) =>
-    request<{ dataset: DatasetSummary }>(`/api/datasets/${id}`, { token }),
+  getDataset: (id: string) =>
+    request<{ dataset: DatasetSummary }>(`/api/datasets/${id}`),
 
-  getProfile: (token: string, id: string) =>
-    request<{ datasetId: string; profile: DatasetProfile }>(
-      `/api/datasets/${id}/profile`,
-      { token },
-    ),
+  getProfile: (id: string) =>
+    request<{ datasetId: string; profile: DatasetProfile }>(`/api/datasets/${id}/profile`),
 
-  getRows: (token: string, id: string, query: RowsQuery) =>
-    request<RowsPage>(`/api/datasets/${id}/rows${toSearch(query)}`, { token }),
+  getAnomalies: (id: string) =>
+    request<AnomaliesResponse>(`/api/datasets/${id}/anomalies`),
 
-  ask: (token: string, id: string, question: string) =>
+  getRows: (id: string, query: RowsQuery) =>
+    request<RowsPage>(`/api/datasets/${id}/rows${toSearch(query)}`),
+
+  ask: (id: string, question: string) =>
     request<AskResponse>(`/api/datasets/${id}/ask`, {
       method: 'POST',
-      token,
       json: { question },
     }),
 
-  exportCsv: (token: string, id: string, query: RowsQuery) =>
+  exportCsv: (id: string, query: RowsQuery) =>
     request<string>(`/api/datasets/${id}/export${toSearch(query)}`, {
-      token,
       accept: 'text',
     }),
 
-  deleteDataset: (token: string, id: string) =>
-    request<null>(`/api/datasets/${id}`, { method: 'DELETE', token }),
+  deleteDataset: (id: string) =>
+    request<null>(`/api/datasets/${id}`, { method: 'DELETE' }),
 };

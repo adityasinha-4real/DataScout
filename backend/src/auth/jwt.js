@@ -16,8 +16,9 @@ function sign(data, secret) {
   return createHmac('sha256', secret).update(data).digest('base64url');
 }
 
-export function signToken(payload, secret, expiresInSeconds) {
-  const issuedAt = Math.floor(Date.now() / 1000);
+/** `nowMs` exists so tests can move time; callers normally omit it. */
+export function signToken(payload, secret, expiresInSeconds, nowMs = Date.now()) {
+  const issuedAt = Math.floor(nowMs / 1000);
   const body = base64url(
     JSON.stringify({ ...payload, iat: issuedAt, exp: issuedAt + expiresInSeconds }),
   );
@@ -26,7 +27,7 @@ export function signToken(payload, secret, expiresInSeconds) {
 }
 
 /** @returns {object|null} the payload, or null if the token is unusable. */
-export function verifyToken(token, secret) {
+export function verifyToken(token, secret, nowMs = Date.now()) {
   if (typeof token !== 'string') return null;
   const parts = token.split('.');
   if (parts.length !== 3) return null;
@@ -46,6 +47,6 @@ export function verifyToken(token, secret) {
   }
   if (typeof payload !== 'object' || payload === null) return null;
   if (typeof payload.exp !== 'number') return null;
-  if (payload.exp <= Math.floor(Date.now() / 1000)) return null;
+  if (payload.exp <= Math.floor(nowMs / 1000)) return null;
   return payload;
 }

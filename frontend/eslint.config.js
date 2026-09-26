@@ -29,6 +29,11 @@ export default tseslint.config(
     },
   },
   {
+    // Deployment config runs in Node at build time, not in the browser.
+    files: ['vercel.mjs', 'vercel.test.mjs'],
+    languageOptions: { globals: { ...globals.node } },
+  },
+  {
     files: ['vite.config.ts'],
     languageOptions: { globals: { ...globals.node } },
     rules: { 'no-restricted-syntax': 'off' },

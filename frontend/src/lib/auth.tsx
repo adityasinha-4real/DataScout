@@ -11,66 +11,56 @@ import {
 import { api } from './api';
 import type { User } from './types';
 
-const STORAGE_KEY = 'datascout.token';
-
+/**
+ * The session lives in an HttpOnly cookie the API sets at login, so there is
+ * no token here to keep: nothing in this file, or anywhere else in the client,
+ * can read it, which is the point. "Signed in" means /me answered with a user.
+ */
 interface AuthState {
   user: User | null;
-  token: string | null;
   ready: boolean;
   register: (email: string, password: string) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
 
-  // Re-validate a stored token on load: it may have expired since last visit.
+  // On load, ask who the cookie belongs to. No cookie, or an expired one, is
+  // a 401 and simply means signed out.
   useEffect(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (!stored) {
-      setReady(true);
-      return;
-    }
     api
-      .me(stored)
-      .then((result) => {
-        setToken(stored);
-        setUser(result.user);
-      })
-      .catch(() => localStorage.removeItem(STORAGE_KEY))
+      .me()
+      .then((result) => setUser(result.user))
+      .catch(() => setUser(null))
       .finally(() => setReady(true));
   }, []);
 
-  const accept = useCallback((result: { user: User; token: string }) => {
-    localStorage.setItem(STORAGE_KEY, result.token);
-    setToken(result.token);
-    setUser(result.user);
+  const register = useCallback(async (email: string, password: string) => {
+    setUser((await api.register(email, password)).user);
   }, []);
 
-  const register = useCallback(
-    async (email: string, password: string) => accept(await api.register(email, password)),
-    [accept],
-  );
+  const login = useCallback(async (email: string, password: string) => {
+    setUser((await api.login(email, password)).user);
+  }, []);
 
-  const login = useCallback(
-    async (email: string, password: string) => accept(await api.login(email, password)),
-    [accept],
-  );
-
-  const logout = useCallback(() => {
-    localStorage.removeItem(STORAGE_KEY);
-    setToken(null);
-    setUser(null);
+  const logout = useCallback(async () => {
+    try {
+      await api.logout();
+    } finally {
+      // Signed out locally even if the request failed: the UI must never
+      // keep showing an account the user asked to leave.
+      setUser(null);
+    }
   }, []);
 
   const value = useMemo(
-    () => ({ user, token, ready, register, login, logout }),
-    [user, token, ready, register, login, logout],
+    () => ({ user, ready, register, login, logout }),
+    [user, ready, register, login, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -1,10 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
+import { AnomalyToggle } from '../components/AnomalyToggle';
 import { AskBox } from '../components/AskBox';
 import { api, ApiError, type RowsQuery } from '../lib/api';
-import { useAuth } from '../lib/auth';
-import type { DatasetProfile, DatasetSummary, RowsPage } from '../lib/types';
+import type {
+  ColumnAnomalies,
+  DatasetProfile,
+  DatasetSummary,
+  RowsPage,
+} from '../lib/types';
+
+/** rowIndex → column name → the rules that flagged that cell. */
+function indexAnomalies(columns: ColumnAnomalies[]) {
+  const byRow = new Map<number, Map<string, string[]>>();
+  for (const column of columns) {
+    for (const flag of column.flagged) {
+      const cells = byRow.get(flag.row) ?? new Map<string, string[]>();
+      cells.set(column.column, flag.rules);
+      byRow.set(flag.row, cells);
+    }
+  }
+  return byRow;
+}
 
 const OPERATORS = [
   'eq',
@@ -20,7 +38,6 @@ const OPERATORS = [
 ] as const;
 
 export function DatasetPage() {
-  const { token } = useAuth();
   const { id = '' } = useParams<{ id: string }>();
 
   const [dataset, setDataset] = useState<DatasetSummary | null>(null);
@@ -35,6 +52,10 @@ export function DatasetPage() {
   const [rankBy, setRankBy] = useState('');
   const [pageNumber, setPageNumber] = useState(1);
   const [exported, setExported] = useState<number | null>(null);
+  const [anomalies, setAnomalies] = useState<ColumnAnomalies[] | null>(null);
+  const [anomaliesOnly, setAnomaliesOnly] = useState(false);
+
+  const flaggedCells = useMemo(() => indexAnomalies(anomalies ?? []), [anomalies]);
 
   // Memoised so it can be a stable effect dependency rather than a new object
   // on every render.
@@ -44,32 +65,38 @@ export function DatasetPage() {
       rankBy: rankBy || undefined,
       page: pageNumber,
       pageSize: 25,
+      anomaliesOnly,
     }),
-    [applied, rankBy, pageNumber],
+    [applied, rankBy, pageNumber, anomaliesOnly],
   );
 
   useEffect(() => {
-    if (!token || !id) return;
-    Promise.all([api.getDataset(token, id), api.getProfile(token, id)])
-      .then(([summary, profileResult]) => {
+    if (!id) return;
+    Promise.all([
+      api.getDataset(id),
+      api.getProfile(id),
+      api.getAnomalies(id),
+    ])
+      .then(([summary, profileResult, anomalyResult]) => {
         setDataset(summary.dataset);
         setProfile(profileResult.profile);
+        setAnomalies(anomalyResult.columns);
         setColumn((current) => current || (summary.dataset.columns[0] ?? ''));
       })
       .catch((err: unknown) =>
         setError(err instanceof ApiError ? err.message : 'Could not load dataset.'),
       );
-  }, [token, id]);
+  }, [id]);
 
   const loadRows = useCallback(async () => {
-    if (!token || !id) return;
+    if (!id) return;
     try {
-      setPage(await api.getRows(token, id, query));
+      setPage(await api.getRows(id, query));
       setError(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load rows.');
     }
-  }, [token, id, query]);
+  }, [id, query]);
 
   useEffect(() => {
     void loadRows();
@@ -88,9 +115,9 @@ export function DatasetPage() {
   }
 
   async function onExport() {
-    if (!token || !id) return;
+    if (!id) return;
     try {
-      const csv = await api.exportCsv(token, id, { ...query, page: undefined });
+      const csv = await api.exportCsv(id, { ...query, page: undefined });
       // Count data rows, not the header line.
       setExported(csv.trim().split(/\r?\n/).length - 1);
     } catch (err) {
@@ -162,8 +189,8 @@ export function DatasetPage() {
 
       <AskBox
         onAsk={async (question) => {
-          if (!token || !id) throw new Error('Not signed in.');
-          return api.ask(token, id, question);
+          if (!id) throw new Error('No dataset selected.');
+          return api.ask(id, question);
         }}
         onApply={(filters, rank) => {
           setApplied(filters);
@@ -238,6 +265,15 @@ export function DatasetPage() {
           </button>
         </div>
 
+        <AnomalyToggle
+          flaggedRows={anomalies === null ? null : flaggedCells.size}
+          checked={anomaliesOnly}
+          onChange={(checked) => {
+            setAnomaliesOnly(checked);
+            setPageNumber(1);
+          }}
+        />
+
         {applied.length > 0 && (
           <ul className="chips" data-testid="active-filters">
             {applied.map((filter) => (
@@ -285,12 +321,25 @@ export function DatasetPage() {
                 </tr>
               </thead>
               <tbody>
-                {page.rows.map((entry, index) => (
-                  <tr key={`${entry.row.join('|')}-${index}`} data-testid="row">
+                {page.rows.map((entry) => (
+                  <tr key={entry.index} data-testid="row">
                     {rankBy && <td data-testid="rank-cell">{entry.rank}</td>}
-                    {entry.row.map((cell, cellIndex) => (
-                      <td key={`${page.columns[cellIndex] ?? cellIndex}`}>{cell}</td>
-                    ))}
+                    {entry.row.map((cell, cellIndex) => {
+                      const name = page.columns[cellIndex] ?? String(cellIndex);
+                      const rules = flaggedCells.get(entry.index)?.get(name);
+                      return rules ? (
+                        <td
+                          key={name}
+                          className="anomaly"
+                          data-testid="anomaly-cell"
+                          title={`Outlier (${rules.join(', ')})`}
+                        >
+                          {cell}
+                        </td>
+                      ) : (
+                        <td key={name}>{cell}</td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>

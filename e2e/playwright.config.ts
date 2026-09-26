@@ -9,6 +9,10 @@ const WEB_URL = `http://127.0.0.1:${WEB_PORT}`;
  * Boots the real API and a production build of the frontend, both on private
  * ports against a throwaway in-memory database, so the smoke test exercises
  * the shipped bundle rather than a dev-only code path.
+ *
+ * The browser only ever talks to WEB_URL: the preview server proxies /api to
+ * the API, just as vercel.mjs rewrites /api in production. So the suite runs
+ * same-origin, with no CORS and a first-party cookie, like the real thing.
  */
 export default defineConfig({
   testDir: './tests',
@@ -34,14 +38,18 @@ export default defineConfig({
         NODE_ENV: 'test',
         PORT: String(API_PORT),
         DATABASE_URL: ':memory:',
-        CORS_ORIGIN: WEB_URL,
+        // Every spec signs in from 127.0.0.1 against this one server, which
+        // already comes close to the default of 10 a minute. The limiter has
+        // its own suite (backend/test/rate-limit.test.js); here it would only
+        // turn an unrelated new spec into a mysterious 429.
+        AUTH_RATE_LIMIT_PER_MIN: '1000',
         JWT_SECRET:
           process.env.JWT_SECRET ?? 'e2e-only-secret-value-at-least-32-characters',
       },
     },
     {
       // Rebuild before previewing: VITE_API_BASE_URL is baked in at build
-      // time, so serving a stale dist/ would point the app at the wrong API.
+      // time, so a stale dist/ could still point at an old absolute API URL.
       command:
         `npm --prefix ../frontend run build && ` +
         `npm --prefix ../frontend run preview -- --host 127.0.0.1 ` +
@@ -49,7 +57,9 @@ export default defineConfig({
       url: WEB_URL,
       reuseExistingServer: false,
       timeout: 180_000,
-      env: { VITE_API_BASE_URL: API_URL },
+      // Blank base URL: the bundle calls relative /api paths. The preview
+      // server's proxy (vite.config.ts) forwards them to the API.
+      env: { VITE_API_BASE_URL: '', API_PROXY_TARGET: API_URL },
     },
   ],
 });

@@ -6,7 +6,7 @@ import { useAuth } from '../lib/auth';
 import type { DatasetSummary } from '../lib/types';
 
 export function DatasetsPage() {
-  const { token, user, logout } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
 
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
@@ -14,10 +14,9 @@ export function DatasetsPage() {
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
-    if (!token) return;
-    const result = await api.listDatasets(token);
+    const result = await api.listDatasets();
     setDatasets(result.datasets);
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     refresh().catch((err: unknown) =>
@@ -28,14 +27,14 @@ export function DatasetsPage() {
   /** The file is read in the browser and posted as text/csv. */
   async function onFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
-    if (!file || !token) return;
+    if (!file) return;
 
     setError(null);
     setBusy(true);
     try {
       const text = await file.text();
       const name = file.name.replace(/\.csv$/i, '') || 'Untitled';
-      const { dataset } = await api.uploadDataset(token, name, text);
+      const { dataset } = await api.uploadDataset(name, text);
       await refresh();
       navigate(`/datasets/${dataset.id}`);
     } catch (err) {
@@ -47,9 +46,8 @@ export function DatasetsPage() {
   }
 
   async function onDelete(id: string) {
-    if (!token) return;
     try {
-      await api.deleteDataset(token, id);
+      await api.deleteDataset(id);
       await refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Delete failed.');
@@ -64,7 +62,7 @@ export function DatasetsPage() {
           <span className="muted" data-testid="current-user">
             {user?.email}
           </span>
-          <button type="button" onClick={logout} data-testid="logout">
+          <button type="button" onClick={() => void logout()} data-testid="logout">
             Sign out
           </button>
         </div>

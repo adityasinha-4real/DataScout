@@ -4,8 +4,7 @@ import { z } from 'zod';
 
 import { badRequest, conflict, unauthorized } from '../errors.js';
 import { hashPassword, verifyPassword } from '../auth/password.js';
-import { signToken } from '../auth/jwt.js';
-import { requireAuth } from '../auth/middleware.js';
+import { clearSessionCookie } from '../auth/cookie.js';
 
 const credentials = z.object({
   email: z.string().trim().min(3).max(254).email(),
@@ -30,10 +29,15 @@ const publicUser = (row) => ({
   createdAt: row.created_at ?? row.createdAt,
 });
 
-export function authRouter(config, db) {
+/**
+ * `limiter` guards register and login only: they are the endpoints where a
+ * guess costs an attacker nothing but a request. Both draw on one per-IP
+ * budget, so alternating between them buys no extra attempts.
+ */
+export function authRouter(config, db, sessions, limiter) {
   const router = Router();
 
-  router.post('/auth/register', (req, res) => {
+  router.post('/auth/register', limiter, (req, res) => {
     const { email, password } = validate(credentials, req.body);
     const normalized = email.toLowerCase();
 
@@ -53,14 +57,17 @@ export function authRouter(config, db) {
       'INSERT INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)',
     ).run(user.id, user.email, hashPassword(password), user.created_at);
 
+    // A new account starts at token_version 0 (the column default).
+    const token = sessions.issue(res, { ...user, token_version: 0 });
+    // The token stays in the body too: existing API clients rely on it (C7).
     res.status(201).json({
       user: publicUser(user),
-      token: signToken({ sub: user.id }, config.jwtSecret, config.jwtExpiresIn),
+      token,
       expiresIn: config.jwtExpiresIn,
     });
   });
 
-  router.post('/auth/login', (req, res) => {
+  router.post('/auth/login', limiter, (req, res) => {
     const { email, password } = validate(credentials, req.body);
     const row = db
       .prepare('SELECT * FROM users WHERE email = ?')
@@ -72,14 +79,34 @@ export function authRouter(config, db) {
       throw unauthorized('Incorrect email or password.');
     }
 
+    const token = sessions.issue(res, row);
     res.json({
       user: publicUser(row),
-      token: signToken({ sub: row.id }, config.jwtSecret, config.jwtExpiresIn),
+      token,
       expiresIn: config.jwtExpiresIn,
     });
   });
 
-  router.get('/auth/me', requireAuth(config, db), (req, res) => {
+  /**
+   * Both sign-outs clear the cookie and answer 204, signed in or not. Only a
+   * *currently valid* token revokes anything: a stale or already-revoked one
+   * just gets the cookie cleared, so replaying an old token can never log the
+   * real user out.
+   */
+  const signOut = (revoke) => (req, res) => {
+    const session = sessions.current(req);
+    if (session) revoke(session);
+    clearSessionCookie(res, config);
+    res.status(204).end();
+  };
+
+  /** This session only: other devices stay signed in. */
+  router.post('/auth/logout', signOut(sessions.revokeSession));
+
+  /** Every session of this user, on every device, copies included. */
+  router.post('/auth/logout-all', signOut(sessions.revokeAll));
+
+  router.get('/auth/me', sessions.requireAuth, (req, res) => {
     res.json({ user: req.user });
   });
 

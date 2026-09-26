@@ -3,9 +3,12 @@ import cors from 'cors';
 
 import { AppError, errorHandler, notFoundHandler } from './errors.js';
 import { healthRouter } from './routes/health.js';
+import { debugRouter } from './routes/debug.js';
 import { authRouter } from './routes/auth.js';
 import { datasetsRouter } from './routes/datasets.js';
 import { createProvider } from './llm/provider.js';
+import { createRateLimiter } from './auth/rateLimit.js';
+import { createSessions } from './auth/sessions.js';
 
 /**
  * Body-parser reports its own failures with a `type` field and no error code
@@ -33,16 +36,55 @@ function normalizeBodyErrors() {
 }
 
 /**
- * `deps` exists so the model provider can be swapped for a double in tests.
- * It is the only seam: application behaviour never branches on NODE_ENV, and
- * with `deps` omitted the app builds exactly what production would.
+ * Credentialed CORS against an explicit allowlist. An allowed browser origin
+ * is echoed back; any other origin gets no Access-Control-Allow-Origin at all,
+ * so the browser withholds the response. A request with no Origin header is
+ * not from a browser page and has nothing to protect against, so it gets the
+ * primary origin, as it did before the allowlist existed.
+ */
+function corsOrigin(allowed) {
+  return (origin, callback) => {
+    if (!origin) return callback(null, allowed[0]);
+    return callback(null, allowed.includes(origin) ? origin : false);
+  };
+}
+
+/**
+ * `deps` exists so the model provider can be swapped for a double, the clock
+ * moved, and the rate-limit store replaced. Those are the only seams:
+ * application behaviour never branches on NODE_ENV, and with `deps` omitted
+ * the app builds exactly what production would.
  */
 export function createApp(config, db, deps = {}) {
   const app = express();
   app.disable('x-powered-by');
   const llm = deps.llm === undefined ? createProvider(config) : deps.llm;
+  // Behind a proxy every request arrives from the proxy's address, so without
+  // this all clients would share one rate-limit budget. Trusting more hops
+  // than really exist would let a client pick its own IP via X-Forwarded-For.
+  if (config.trustProxy > 0) app.set('trust proxy', config.trustProxy);
+  // One clock for everything time-based, injectable so tests move time.
+  const now = deps.now ?? Date.now;
+  // Built here, per app, so no two apps (or test files) share counters.
+  // deps.rateLimitStore swaps the in-memory store for a shared one (see
+  // src/auth/rateLimit.js for the interface); omitted, each app has its own.
+  const authLimiter = createRateLimiter({
+    limit: config.authRateLimitPerMin,
+    windowMs: 60_000,
+    now,
+    store: deps.rateLimitStore,
+  });
+  const sessions = createSessions(config, db, now);
 
-  app.use(cors({ origin: config.corsOrigin }));
+  // No allowlist, no CORS: every cross-origin read is refused by the browser.
+  if (config.corsOrigins.length > 0) {
+    app.use(
+      cors({
+        origin: corsOrigin(config.corsOrigins),
+        credentials: true,
+      }),
+    );
+  }
   app.use(express.json({ limit: '1mb' }));
   app.use(
     express.text({
@@ -52,8 +94,10 @@ export function createApp(config, db, deps = {}) {
   );
 
   app.use('/api', healthRouter(db));
-  app.use('/api', authRouter(config, db));
-  app.use('/api', datasetsRouter(config, db, llm));
+  // Measurement aid for TRUST_PROXY; mounted only when explicitly asked for.
+  if (config.debugIpEndpoint) app.use('/api', debugRouter(config));
+  app.use('/api', authRouter(config, db, sessions, authLimiter));
+  app.use('/api', datasetsRouter(config, db, llm, sessions.requireAuth));
 
   app.use(notFoundHandler());
   app.use(normalizeBodyErrors());

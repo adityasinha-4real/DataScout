@@ -3,9 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
 import { badRequest, notFound, unavailable } from '../errors.js';
-import { requireAuth } from '../auth/middleware.js';
 import { parseCsv, toCsv } from '../csv/parse.js';
 import { profileDataset } from '../csv/profile.js';
+import { detectAnomalies, flaggedRowIndexes } from '../csv/anomalies.js';
 import { queryRows } from '../csv/query.js';
 import {
   buildPrompt,
@@ -32,6 +32,7 @@ const rowsQuery = z.object({
   rankBy: z.string().trim().min(1).optional(),
   page: z.coerce.number().int().positive().optional(),
   pageSize: z.coerce.number().int().positive().max(1000).optional(),
+  anomaliesOnly: z.enum(['true', 'false']).optional(),
 });
 
 const summary = (row) => ({
@@ -47,9 +48,9 @@ const askBody = z.object({
   question: z.string().trim().min(1).max(500),
 });
 
-export function datasetsRouter(config, db, llm = null) {
+export function datasetsRouter(config, db, llm, requireAuth) {
   const router = Router();
-  router.use('/datasets', requireAuth(config, db));
+  router.use('/datasets', requireAuth);
 
   /** Datasets are scoped to their owner: another user's id reads as absent. */
   const load = (req) => {
@@ -64,6 +65,13 @@ export function datasetsRouter(config, db, llm = null) {
     columns: JSON.parse(row.columns_json),
     rows: JSON.parse(row.rows_json),
   });
+
+  const anomaliesOf = ({ columns, rows }) =>
+    detectAnomalies(rows, profileDataset(columns, rows));
+
+  /** `anomaliesOnly=true` narrows the query to rows flagged in any column. */
+  const onlyRowsFor = (q, data) =>
+    q.anomaliesOnly === 'true' ? flaggedRowIndexes(anomaliesOf(data)) : undefined;
 
   router.post('/datasets', (req, res) => {
     const { name } = validate(uploadQuery, req.query);
@@ -125,7 +133,9 @@ export function datasetsRouter(config, db, llm = null) {
   router.get('/datasets/:id/rows', (req, res) => {
     const row = load(req);
     const q = validate(rowsQuery, req.query);
-    const result = queryRows(parsed(row), {
+    const data = parsed(row);
+    const result = queryRows(data, {
+      onlyRows: onlyRowsFor(q, data),
       filters: q.filter,
       sort: q.sort,
       direction: q.direction,
@@ -140,7 +150,9 @@ export function datasetsRouter(config, db, llm = null) {
     const row = load(req);
     const q = validate(rowsQuery, req.query);
     // Export ignores pagination on purpose: you get every matching row.
-    const all = queryRows(parsed(row), {
+    const data = parsed(row);
+    const all = queryRows(data, {
+      onlyRows: onlyRowsFor(q, data),
       filters: q.filter,
       sort: q.sort,
       direction: q.direction,
@@ -153,6 +165,16 @@ export function datasetsRouter(config, db, llm = null) {
       `attachment; filename="${row.name.replace(/[^\w.-]+/g, '_')}.csv"`,
     );
     res.send(toCsv(all.columns, all.rows.map((entry) => entry.row)));
+  });
+
+  /**
+   * Statistical outliers per numeric column. Deliberately a separate route
+   * from /profile: the profile feeds the /ask prompt, and which rows are
+   * anomalous must never travel that way.
+   */
+  router.get('/datasets/:id/anomalies', (req, res) => {
+    const row = load(req);
+    res.json({ datasetId: row.id, columns: anomaliesOf(parsed(row)) });
   });
 
   /**

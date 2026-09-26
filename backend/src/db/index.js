@@ -12,7 +12,11 @@ CREATE TABLE IF NOT EXISTS users (
   id            TEXT PRIMARY KEY,
   email         TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
-  created_at    TEXT NOT NULL
+  created_at    TEXT NOT NULL,
+  token_version INTEGER NOT NULL DEFAULT 0,
+  -- JSON array of {"sid": string, "until": epoch seconds}: sessions signed
+  -- out one at a time, kept until no token of theirs can still be valid.
+  revoked_sessions TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS datasets (
@@ -35,8 +39,33 @@ export function openDatabase(databaseUrl) {
   }
   const db = new DatabaseSync(databaseUrl);
   db.exec('PRAGMA foreign_keys = ON;');
-  db.exec(SCHEMA);
+  applySchema(db);
   return db;
+}
+
+/**
+ * Creates the tables, then brings a database made by an older version up to
+ * date. CREATE TABLE IF NOT EXISTS leaves an existing table alone, so a column
+ * added later has to be added explicitly. Every step is idempotent.
+ */
+export function applySchema(db) {
+  db.exec(SCHEMA);
+  const userColumns = db
+    .prepare('PRAGMA table_info(users)')
+    .all()
+    .map((column) => column.name);
+  if (!userColumns.includes('token_version')) {
+    // Existing accounts start at version 0; their old tokens carry no version
+    // at all, so they stop working and those users sign in once more.
+    db.exec(
+      'ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0',
+    );
+  }
+  if (!userColumns.includes('revoked_sessions')) {
+    db.exec(
+      "ALTER TABLE users ADD COLUMN revoked_sessions TEXT NOT NULL DEFAULT '[]'",
+    );
+  }
 }
 
 /** Cheap liveness probe used by /api/health. */
