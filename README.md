@@ -201,22 +201,45 @@ instance; scaling out would need a shared store (e.g. Redis) for the limiter
 as well as a networked database.
 
 The client IP comes from the socket unless `TRUST_PROXY` says how many proxy
-hops to believe in `X-Forwarded-For`:
+hops to believe in `X-Forwarded-For` (Express `trust proxy` with a hop count):
 
-- `TRUST_PROXY=0` — the **code default**. `X-Forwarded-For` is ignored, so a
-  client cannot pick its own IP. Right for local dev and for clients
-  connecting straight to the process.
-- `TRUST_PROXY=1` — **set in the production image** (`backend/Dockerfile`).
-  In production the API always sits behind a proxy; with `0`, `req.ip` would
-  be the proxy's address on every request and *all clients would share one
-  rate-limit bucket*, so one noisy client locks everyone out of sign-in.
-- `TRUST_PROXY=2` — when two proxies stand in front, e.g. Vercel's rewrite
-  *and* the API host's own router: with `1`, every client would appear as a
-  Vercel egress address. Count the hops for your host and set it exactly.
+- **Unset / `0`**: `X-Forwarded-For` is ignored; `req.ip` is the socket peer.
+  The default outside production, and right when clients connect directly.
+- **`N`**: `req.ip` is the address `N` hops back. Behind proxies this must be
+  the *real* number of proxies: too low and every client appears as a proxy
+  address and shares **one** rate-limit bucket (one noisy client locks everyone
+  out of sign-in); too high and a client can put any address in
+  `X-Forwarded-For` and get a fresh bucket per request.
+- **Production requires it to be set.** With `NODE_ENV=production` and no
+  `TRUST_PROXY`, the server refuses to start and says to measure it. The
+  Docker image deliberately does not set it. `0` is accepted (a measured "no
+  proxies"); whether a value is right is not something code can check, so
+  measure it.
 
-Never set it higher than the real number of hops, and do not expose the
-container directly to the internet while it trusts the header: a client that
-can reach it without the proxy can put any address in `X-Forwarded-For`.
+Never expose the container directly to the internet while it trusts
+`X-Forwarded-For`: a client that bypasses the proxies can forge the header.
+
+### Measuring TRUST_PROXY
+
+Do this once per deployment topology (e.g. Vercel rewrite, then host router,
+then container), and again whenever a proxy is added or removed.
+
+1. Deploy the API with `TRUST_PROXY=0` and `DEBUG_IP_ENDPOINT=1`. The server
+   logs a warning while the endpoint is mounted.
+2. From your own machine, find your public address:
+   `curl -s https://api.ipify.org`, call it `MY_IP`.
+3. Call the endpoint **the way real users reach the API**, through the
+   frontend's rewrite: `curl -s https://app.example.com/api/_debug/ip`
+4. The response contains `chain`: the socket peer first, then the
+   `X-Forwarded-For` entries from nearest to farthest proxy. Find `MY_IP` in
+   `chain`; **its index is the hop count `N`** (`req.ip` is always
+   `chain[TRUST_PROXY]`). If `MY_IP` is not in `chain` at all, a proxy is not
+   forwarding the header: fix that first, per-client limiting is impossible.
+5. Redeploy with `TRUST_PROXY=N`, flag still on, and repeat step 3: `ip` must
+   now equal `MY_IP`. Also curl the host's own URL directly, if it has one: if
+   that also answers, the container is reachable around the proxies and anyone
+   can forge `X-Forwarded-For`, so restrict it to the proxy before going live.
+6. Redeploy without `DEBUG_IP_ENDPOINT` (or with `0`). Step 3 must now be 404.
 
 ## Deployment
 
@@ -238,6 +261,7 @@ docker build -t datascout-api backend
 docker run -d --name datascout-api -p 4000:4000 \
   -v datascout-data:/data \
   -e JWT_SECRET="$(openssl rand -hex 48)" \
+  -e TRUST_PROXY=<measured hop count> \
   datascout-api
 ```
 
@@ -251,9 +275,9 @@ docker run -d --name datascout-api -p 4000:4000 \
   the container is stopped.
 - SQLite means **one** API instance. Do not run replicas against the same
   volume, and note the sign-in rate limit is per process too.
-- The image sets `TRUST_PROXY=1` (see "Sign-in rate limit and proxies"):
-  use `-e TRUST_PROXY=2` if both Vercel's rewrite and your host's router sit
-  in front, and keep the container reachable only through them.
+- The image does **not** set `TRUST_PROXY`, and in production the server will
+  not start without it. Measure it first ("Measuring TRUST_PROXY"), then pass
+  `-e TRUST_PROXY=<N>`; keep the container reachable only through the proxies.
 - Runs as the unprivileged `node` user, with a `HEALTHCHECK` on `/api/health`.
   `docker stop` shuts it down cleanly on SIGTERM.
 - Set `ANTHROPIC_API_KEY` (and optionally `LLM_MODEL`) to enable "Ask a

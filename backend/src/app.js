@@ -3,6 +3,7 @@ import cors from 'cors';
 
 import { AppError, errorHandler, notFoundHandler } from './errors.js';
 import { healthRouter } from './routes/health.js';
+import { debugRouter } from './routes/debug.js';
 import { authRouter } from './routes/auth.js';
 import { datasetsRouter } from './routes/datasets.js';
 import { createProvider } from './llm/provider.js';
@@ -90,6 +91,8 @@ export function createApp(config, db, deps = {}) {
   );
 
   app.use('/api', healthRouter(db));
+  // Measurement aid for TRUST_PROXY; mounted only when explicitly asked for.
+  if (config.debugIpEndpoint) app.use('/api', debugRouter(config));
   app.use('/api', authRouter(config, db, sessions, authLimiter));
   app.use('/api', datasetsRouter(config, db, llm, sessions.requireAuth));
 

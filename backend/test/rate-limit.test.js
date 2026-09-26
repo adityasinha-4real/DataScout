@@ -211,14 +211,6 @@ describe('TRUST_PROXY on versus off, same traffic', () => {
     assert.deepEqual(await twoForwardedClients({ TRUST_PROXY: '0' }), [401, 429]);
     assert.deepEqual(await twoForwardedClients({}), [401, 429], 'off is the default');
   });
-
-  test('the production image turns it on', async () => {
-    const { readFile } = await import('node:fs/promises');
-    const dockerfile = await readFile(new URL('../Dockerfile', import.meta.url), 'utf8');
-    const env = /^ENV\s+((?:.*\\\r?\n)*.*)$/m.exec(dockerfile)?.[1] ?? '';
-    assert.match(env, /\bTRUST_PROXY=1\b/);
-    assert.match(env, /\bNODE_ENV=production\b/);
-  });
 });
 
 describe('limiter unit and config', () => {
@@ -251,7 +243,7 @@ describe('limiter unit and config', () => {
   test('config validates both variables', () => {
     const base = { JWT_SECRET: 'z'.repeat(40) };
     assert.equal(loadConfig(base).authRateLimitPerMin, 10);
-    assert.equal(loadConfig(base).trustProxy, 0);
+    assert.equal(loadConfig(base).trustProxy, null, 'unset is off, and distinguishable from 0');
     assert.equal(loadConfig({ ...base, AUTH_RATE_LIMIT_PER_MIN: '25' }).authRateLimitPerMin, 25);
     assert.equal(loadConfig({ ...base, TRUST_PROXY: '2' }).trustProxy, 2);
     for (const bad of ['0', '-1', '1.5', 'ten']) {

@@ -13,20 +13,17 @@
 # so the slim image with no compiler is enough.
 FROM node:24-slim
 
-# TRUST_PROXY=1: in production the API always sits behind at least one proxy
-# (the platform's router, reached via the frontend's /api rewrite). With the
-# default of 0, req.ip would be that proxy's address for every request, and
-# every client would share one sign-in rate-limit bucket. Override with -e
-# TRUST_PROXY=2 when two proxies stand in front (README "Deployment"), and
-# never expose the container directly while it trusts X-Forwarded-For.
+# TRUST_PROXY is deliberately NOT set here: the right value is the number of
+# proxies in front of this container, which only a real deployment can tell.
+# The server refuses to start in production until it is set; measure it with
+# DEBUG_IP_ENDPOINT=1 (README "Measuring TRUST_PROXY") and pass -e TRUST_PROXY=N.
 #
 # JWT_EXPIRES_IN=900: access tokens (and the session cookie) last 15 minutes.
-# Logout revokes every earlier token via token_version; the short TTL bounds
-# how long any token that escapes is useful even without a logout.
+# Logout / logout-all revoke tokens server-side; the short TTL bounds how long
+# any token that escapes is useful even without a logout.
 ENV NODE_ENV=production \
     PORT=4000 \
     DATABASE_URL=/data/datascout.db \
-    TRUST_PROXY=1 \
     JWT_EXPIRES_IN=900
 
 WORKDIR /app
