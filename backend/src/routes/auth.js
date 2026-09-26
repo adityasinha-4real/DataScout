@@ -5,7 +5,11 @@ import { z } from 'zod';
 import { badRequest, conflict, unauthorized } from '../errors.js';
 import { hashPassword, verifyPassword } from '../auth/password.js';
 import { signToken } from '../auth/jwt.js';
-import { requireAuth } from '../auth/middleware.js';
+import {
+  credentialFrom,
+  requireAuth,
+  userForToken,
+} from '../auth/middleware.js';
 import { clearSessionCookie, setSessionCookie } from '../auth/cookie.js';
 
 const credentials = z.object({
@@ -59,7 +63,8 @@ export function authRouter(config, db, limiter = (req, res, next) => next()) {
       'INSERT INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)',
     ).run(user.id, user.email, hashPassword(password), user.created_at);
 
-    const token = signToken({ sub: user.id }, config.jwtSecret, config.jwtExpiresIn);
+    // A new account starts at token_version 0 (the column default).
+    const token = signToken({ sub: user.id, ver: 0 }, config.jwtSecret, config.jwtExpiresIn);
     setSessionCookie(res, token, config);
     // The token stays in the body too: existing API clients rely on it (C7).
     res.status(201).json({
@@ -81,7 +86,11 @@ export function authRouter(config, db, limiter = (req, res, next) => next()) {
       throw unauthorized('Incorrect email or password.');
     }
 
-    const token = signToken({ sub: row.id }, config.jwtSecret, config.jwtExpiresIn);
+    const token = signToken(
+      { sub: row.id, ver: row.token_version },
+      config.jwtSecret,
+      config.jwtExpiresIn,
+    );
     setSessionCookie(res, token, config);
     res.json({
       user: publicUser(row),
@@ -91,11 +100,22 @@ export function authRouter(config, db, limiter = (req, res, next) => next()) {
   });
 
   /**
-   * Clears the cookie. Needs no session: signing out when already signed out
-   * is not an error. JWTs are stateless, so a copy of the token taken before
-   * logout stays valid until it expires (PLAN.md §8).
+   * Clears the cookie and, when the request carries a currently valid token,
+   * bumps the user's token_version so every token issued before now — on
+   * this device or any other, copied or not — is refused from here on.
+   *
+   * Only a *valid* token can do that: a stale or revoked one just gets the
+   * cookie cleared, so replaying an old token cannot keep logging the real
+   * user out. Signing out when already signed out is not an error.
    */
   router.post('/auth/logout', (req, res) => {
+    const token = credentialFrom(req);
+    const user = token ? userForToken(token, config, db) : null;
+    if (user) {
+      db.prepare(
+        'UPDATE users SET token_version = token_version + 1 WHERE id = ? AND token_version = ?',
+      ).run(user.id, user.token_version);
+    }
     clearSessionCookie(res, config);
     res.status(204).end();
   });

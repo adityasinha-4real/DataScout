@@ -19,10 +19,15 @@ FROM node:24-slim
 # every client would share one sign-in rate-limit bucket. Override with -e
 # TRUST_PROXY=2 when two proxies stand in front (README "Deployment"), and
 # never expose the container directly while it trusts X-Forwarded-For.
+#
+# JWT_EXPIRES_IN=900: access tokens (and the session cookie) last 15 minutes.
+# Logout revokes every earlier token via token_version; the short TTL bounds
+# how long any token that escapes is useful even without a logout.
 ENV NODE_ENV=production \
     PORT=4000 \
     DATABASE_URL=/data/datascout.db \
-    TRUST_PROXY=1
+    TRUST_PROXY=1 \
+    JWT_EXPIRES_IN=900
 
 WORKDIR /app
 

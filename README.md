@@ -130,8 +130,18 @@ failing later on a request. The frontend reads its API origin from
 Signing in sets an `HttpOnly; SameSite=Lax; Path=/` cookie (plus `Secure` when
 `NODE_ENV=production`), and the browser client authenticates with that cookie
 alone — it never stores the token. API clients can still send
-`Authorization: Bearer <token>` from the login response. `POST /api/auth/logout`
-clears the cookie.
+`Authorization: Bearer <token>` from the login response.
+
+`POST /api/auth/logout` clears the cookie **and revokes every token issued
+before it**: each user has a `token_version`, every token carries the version
+it was issued at, and logout increments it. A copy of the token taken off the
+machine is refused from then on, on every device. Signing in again issues a
+token at the new version. Only a currently valid token can trigger that bump,
+so replaying an old one cannot keep logging the user out.
+
+Tokens live `JWT_EXPIRES_IN` seconds: 900 (15 minutes) in the production image
+and `.env.example`. There is no refresh token, so after 15 minutes the user
+signs in again. (Unset, the code falls back to 3600.)
 
 The browser only ever calls relative `/api/...` paths on the page's own
 origin. In production Vercel rewrites them to the API (`frontend/vercel.mjs`);
