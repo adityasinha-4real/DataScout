@@ -263,6 +263,29 @@ git rev-parse HEAD origin/iter2/criteria   # two identical SHAs
 - [TRUST_PROXY fail-safe] DONE — commit 1d175b2 — `TRUST_PROXY=1` removed from the image. Unset reads as `null`; `assertStartable()` (run by `server.js` after `loadConfig()`) exits 1 in production when it is unset, with "TRUST_PROXY must be set in production. Measure the number of proxy hops … DEBUG_IP_ENDPOINT=1 …". `0` is accepted. The check sits in the boot path rather than `loadConfig()` because frozen `app.test.js` builds a production app without TRUST_PROXY. `GET /api/_debug/ip` (`src/routes/debug.js`) returns `ip`, `ips`, `xForwardedFor`, `remoteAddress`, `chain`, `trustProxy`; mounted only when `DEBUG_IP_ENDPOINT=1` in any environment; other values refuse to boot; the server warns when mounted. `backend/test/trust-proxy.test.js` (11 tests) spawns the real `server.js`: production without TRUST_PROXY → exit 1 with that message; with it → listening; development unset → listening; the image's `ENV` has no TRUST_PROXY; endpoint 404 by default in development and production, 404 with `0`/blank, 200 with `1` in both, `ip === chain[N]` for N = 0,1,2, warning logged. Mutations (requirement removed; endpoint mounted unconditionally) each fail 2 tests. Backend 183 tests, 97.95% lines.
 - [TRUST_PROXY measurement] BLOCKED (unverified) — no access to a host for the API container (only Vercel tooling exists in this session, and Vercel alone is half the path), so the real Vercel → host hop count was **not measured** and no value was guessed. README "Measuring TRUST_PROXY" gives the exact procedure (deploy with `TRUST_PROXY=0` + `DEBUG_IP_ENDPOINT=1`, `curl -s https://api.ipify.org`, `curl -s https://<app>/api/_debug/ip`, index of your IP in `chain` = N, redeploy with `TRUST_PROXY=N` and confirm `ip` equals your IP, check the host URL is not reachable directly, redeploy without the flag and confirm 404). Unblock: the owner deploys the API somewhere and runs it.
 
+- [CSRF audit] DONE — commit e5dba51 — `backend/test/csrf-surface.test.js` walks the live Express router stack (fails closed on an unknown mount point) and asserts (1) the route table equals the audited list exactly, (2) no GET/HEAD route exists on a denylisted path and no GET route runs the same handler function as any state-changing route, (3) GET to each denylisted path with a valid session → 404, no `Set-Cookie`, session and data intact. Mutations: adding `GET /api/auth/logout` fails all 3; reusing the logout handler on a new `GET /api/auth/signout-link` fails 2 (table + handler identity). Route table (printed from the live router, all optional routes enabled):
+
+  | Method | Path | Auth | Changes state | CSRF note |
+  |---|---|---|---|---|
+  | GET | `/api/health` | none | no | — |
+  | GET | `/api/_debug/ip` | none | no | only mounted with `DEBUG_IP_ENDPOINT=1` |
+  | POST | `/api/auth/register` | none | yes (creates user, sets cookie) | cross-site POST carries no Lax cookie; rate-limited |
+  | POST | `/api/auth/login` | none | yes (sets cookie) | as above; login CSRF would only sign the victim into the attacker's account, and needs the Lax cookie to be absent anyway |
+  | POST | `/api/auth/logout` | valid token or no-op | yes (revokes this sid) | GET is 404 (tested) |
+  | POST | `/api/auth/logout-all` | valid token or no-op | yes (bumps token_version) | GET is 404 (tested) |
+  | GET | `/api/auth/me` | required | no (may re-set the cookie: sliding re-issue of the same session) | — |
+  | GET | `/api/datasets` | required | no | — |
+  | POST | `/api/datasets` | required | yes (stores a dataset) | accepts `text/csv`/`text/plain` bodies, which a cross-site form could send — blocked because the Lax cookie is not attached to cross-site POSTs |
+  | GET | `/api/datasets/:id` | required | no | — |
+  | DELETE | `/api/datasets/:id` | required | yes | a cross-site DELETE needs a CORS preflight, which production refuses |
+  | GET | `/api/datasets/:id/profile` | required | no | — |
+  | GET | `/api/datasets/:id/rows` | required | no | — |
+  | GET | `/api/datasets/:id/export` | required | no | — |
+  | GET | `/api/datasets/:id/anomalies` | required | no | — |
+  | POST | `/api/datasets/:id/ask` | required | treated as yes (spends model credits) | JSON body → preflight cross-origin; Lax cookie absent cross-site |
+
+  Residual risk: `SameSite=Lax` is per *site*, so a compromised sibling subdomain on the same registrable domain (e.g. `evil.example.com` vs `app.example.com`) could send cookie-bearing POSTs. `*.vercel.app` is on the Public Suffix List, so other Vercel projects are cross-site; a custom domain's own subdomains are not. Revisit (CSRF token or `__Host-` cookie) if untrusted subdomains ever share the domain.
+
 **Iteration 2 status:** AC-T4…AC-T8 `[x]`; Scope E DONE (real Docker build verified); same-origin `/api` rewrite, TRUST_PROXY production default and logout revocation DONE; min/max documented as known behaviour; Scope C deferred to iteration 3. Still open for the owner: the 3600 s code-default TTL (frozen test), and anything that needs a live Vercel deploy (see NOT VERIFIED notes above).
 
 ---
