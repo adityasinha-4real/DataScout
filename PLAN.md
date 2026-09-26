@@ -234,8 +234,11 @@ The earlier check `git diff bbc0b61 -- verify.sh` proved nothing: there is no ro
 ```bash
 bash scripts/verify.sh              # last line: ALL CHECKS PASSED
 bash scripts/goal-check.sh          # = git diff bbc0b61 -- scripts/verify.sh + the 8 guarded tests,
-                                    #   failing by name if any path is missing at bbc0b61, HEAD or on disk
-grep -n "SHA[_]" PLAN.md            # no output; same match as "SHA" + "_", written so this line cannot match itself
+                                    #   failing by name if any path is missing at bbc0b61, HEAD or on disk;
+                                    #   the only allowed diff is the approved app.test.js:87 line
+grep -nE '^- \[[^]]+\] .*(SHA_[A-Z0-9_]+|commit <sha>)' PLAN.md
+                                    # no output: no log entry holds an unfilled
+                                    #   commit placeholder (also run by goal-check.sh)
 git status                          # clean
 git rev-parse HEAD origin/iter2/criteria   # two identical SHAs
 ```
@@ -285,6 +288,8 @@ git rev-parse HEAD origin/iter2/criteria   # two identical SHAs
   | POST | `/api/datasets/:id/ask` | required | treated as yes (spends model credits) | JSON body → preflight cross-origin; Lax cookie absent cross-site |
 
   Residual risk: `SameSite=Lax` is per *site*, so a compromised sibling subdomain on the same registrable domain (e.g. `evil.example.com` vs `app.example.com`) could send cookie-bearing POSTs. `*.vercel.app` is on the Public Suffix List, so other Vercel projects are cross-site; a custom domain's own subdomains are not. Revisit (CSRF token or `__Host-` cookie) if untrusted subdomains ever share the domain.
+
+- [Placeholder grep] DONE — commit 0f9adea — the bare-prefix grep is replaced by an anchored pattern (in the goal-check block above and inside `scripts/goal-check.sh`): it matches only progress-log entry lines carrying `commit <sha>` (the template's format, from the §9 comment) or an uppercase SHA-underscore token (the form the owner's prompt named). The earlier `SHA[_]` rewording is reverted to a plain description. Shown in the transcript: the real PLAN.md → no match; a copy with four planted lines → exactly the two real placeholders reported, the prose mention and a real `commits d9f32a4..a27a04e` range ignored; the template comment on §9 is ignored; `goal-check.sh` against the planted copy → FAIL, exit 1.
 
 **Iteration 2 status:** AC-T4…AC-T8 `[x]`; Scope E DONE (real Docker build verified); same-origin `/api` rewrite, TRUST_PROXY production default and logout revocation DONE; min/max documented as known behaviour; Scope C deferred to iteration 3. Still open for the owner: the 3600 s code-default TTL (frozen test), and anything that needs a live Vercel deploy (see NOT VERIFIED notes above).
 
