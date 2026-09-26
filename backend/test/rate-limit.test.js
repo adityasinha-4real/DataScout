@@ -3,7 +3,7 @@ import test, { describe } from 'node:test';
 
 import { api, registerUser } from './helpers.js';
 import { startServerWith } from './harness.js';
-import { createRateLimiter } from '../src/auth/rateLimit.js';
+import { createMemoryStore, createRateLimiter } from '../src/auth/rateLimit.js';
 import { ConfigError, loadConfig } from '../src/config.js';
 
 /** A clock the test moves by hand. Nothing here sleeps. */
@@ -214,32 +214,99 @@ describe('TRUST_PROXY on versus off, same traffic', () => {
 });
 
 describe('limiter unit and config', () => {
-  test('keys that go quiet are swept, so memory does not grow without bound', () => {
+  test('keys that go quiet are swept, so memory does not grow without bound', async () => {
     const clock = manualClock();
-    const limiter = createRateLimiter({ limit: 1, windowMs: 1_000, now: clock.now });
-    const run = (ip) => {
+    const store = createMemoryStore();
+    const limiter = createRateLimiter({ limit: 1, windowMs: 1_000, now: clock.now, store });
+    const run = async (ip) => {
       let outcome;
-      const res = { set() {} };
-      limiter({ ip }, res, (err) => {
+      await limiter({ ip }, { set() {} }, (err) => {
         outcome = err ? err.status : 'ok';
       });
       return outcome;
     };
 
-    for (let i = 0; i < 50; i += 1) run(`10.0.1.${i}`);
-    assert.equal(run('10.0.0.1'), 'ok');
-    assert.equal(run('10.0.0.1'), 429);
-    assert.equal(limiter.trackedKeys(), 51);
+    for (let i = 0; i < 50; i += 1) await run(`10.0.1.${i}`);
+    assert.equal(await run('10.0.0.1'), 'ok');
+    assert.equal(await run('10.0.0.1'), 429);
+    assert.equal(store.size(), 51);
 
     clock.advance(1_000);
     // The first call after a full window sweeps every aged-out client.
-    assert.equal(run('10.0.0.2'), 'ok');
-    assert.equal(limiter.trackedKeys(), 1);
-    assert.equal(run('10.0.0.1'), 'ok');
-    assert.equal(run(undefined), 'ok', 'a request with no IP is still limited, not crashed');
-    assert.equal(run(undefined), 429);
+    assert.equal(await run('10.0.0.2'), 'ok');
+    assert.equal(store.size(), 1);
+    assert.equal(await run('10.0.0.1'), 'ok');
+    assert.equal(await run(undefined), 'ok', 'a request with no IP is still limited, not crashed');
+    assert.equal(await run(undefined), 429);
   });
 
+  test('the memory store implements the interface on its own', async () => {
+    const store = createMemoryStore();
+    assert.deepEqual(await store.hit('k', 1_000, 60_000, 2), { allowed: true, oldestMs: 1_000 });
+    assert.deepEqual(await store.hit('k', 2_000, 60_000, 2), { allowed: true, oldestMs: 1_000 });
+    assert.deepEqual(await store.hit('k', 3_000, 60_000, 2), { allowed: false, oldestMs: 1_000 });
+    // A denied hit is not recorded, and aged-out hits free their slot.
+    assert.deepEqual(await store.hit('k', 61_000, 60_000, 2), { allowed: true, oldestMs: 2_000 });
+    assert.deepEqual(await store.hit('other', 3_000, 60_000, 2), { allowed: true, oldestMs: 3_000 });
+  });
+});
+
+describe('an injected rate-limit store', () => {
+  /** A stand-in for a shared store: records calls, answers what it is told. */
+  function recordingStore(answer) {
+    const calls = [];
+    return {
+      calls,
+      async hit(key, nowMs, windowMs, limit) {
+        calls.push({ key, nowMs, windowMs, limit });
+        return answer(calls.length, nowMs);
+      },
+    };
+  }
+
+  test('the app asks the injected store, and obeys its answer', async () => {
+    const clock = manualClock();
+    // Allows the first request, then denies as if a hit 15 s ago filled it.
+    const store = recordingStore((n, nowMs) =>
+      n === 1 ? { allowed: true, oldestMs: nowMs } : { allowed: false, oldestMs: nowMs - 15_000 },
+    );
+    const { baseUrl } = await startServerWith(
+      { llm: null, now: clock.now, rateLimitStore: store },
+      { AUTH_RATE_LIMIT_PER_MIN: '7' },
+    );
+
+    assert.equal((await badLogin(baseUrl)).status, 401);
+    const denied = await badLogin(baseUrl);
+    assert.equal(denied.status, 429);
+    assert.equal(denied.headers.get('retry-after'), '45', '60 s window minus 15 s');
+
+    assert.equal(store.calls.length, 2);
+    for (const call of store.calls) {
+      assert.equal(call.nowMs, clock.now());
+      assert.equal(call.windowMs, 60_000);
+      assert.equal(call.limit, 7);
+      assert.match(call.key, /127\.0\.0\.1/);
+    }
+    // Non-auth routes never consult the store.
+    await api(baseUrl, '/api/health');
+    assert.equal(store.calls.length, 2);
+  });
+
+  test('a store that fails rejects the sign-in (500) instead of waving it through', async () => {
+    const store = {
+      async hit() {
+        throw new Error('store unreachable');
+      },
+    };
+    const { baseUrl } = await startServerWith({ llm: null, rateLimitStore: store });
+    const result = await badLogin(baseUrl);
+    assert.equal(result.status, 500);
+    assert.equal(result.body.error.code, 'INTERNAL_ERROR');
+    assert.equal((await api(baseUrl, '/api/health')).status, 200, 'the rest of the app is fine');
+  });
+});
+
+describe('limiter config', () => {
   test('config validates both variables', () => {
     const base = { JWT_SECRET: 'z'.repeat(40) };
     assert.equal(loadConfig(base).authRateLimitPerMin, 10);

@@ -50,8 +50,8 @@ function corsOrigin(allowed) {
 }
 
 /**
- * `deps` exists so the model provider can be swapped for a double and the
- * rate limiter's clock can be moved in tests. Those are the only seams:
+ * `deps` exists so the model provider can be swapped for a double, the clock
+ * moved, and the rate-limit store replaced. Those are the only seams:
  * application behaviour never branches on NODE_ENV, and with `deps` omitted
  * the app builds exactly what production would.
  */
@@ -66,10 +66,13 @@ export function createApp(config, db, deps = {}) {
   // One clock for everything time-based, injectable so tests move time.
   const now = deps.now ?? Date.now;
   // Built here, per app, so no two apps (or test files) share counters.
+  // deps.rateLimitStore swaps the in-memory store for a shared one (see
+  // src/auth/rateLimit.js for the interface); omitted, each app has its own.
   const authLimiter = createRateLimiter({
     limit: config.authRateLimitPerMin,
     windowMs: 60_000,
     now,
+    store: deps.rateLimitStore,
   });
   const sessions = createSessions(config, db, now);
 

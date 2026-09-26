@@ -193,12 +193,24 @@ domain.
 window. The next request gets `429 RATE_LIMITED` with `Retry-After` in whole
 seconds. Other routes, including logout, are never limited.
 
-**The limiter is in-memory, per process.** Restarting the API (a deploy, a
-crash, `docker restart`) resets every counter, and two replicas would each
-keep their own, so a client spread across N replicas gets N× the budget.
-That is acceptable here only because SQLite already pins the API to one
-instance; scaling out would need a shared store (e.g. Redis) for the limiter
-as well as a networked database.
+**The limiter is in-memory, per process: run one API instance.** Restarting
+the API (a deploy, a crash, `docker restart`) resets every counter, and two
+replicas would each keep their own, so a client spread across N replicas gets
+N times the budget. That is acceptable only because SQLite already pins the
+API to one instance.
+
+The store is pluggable for when that changes. `src/auth/rateLimit.js` defines
+the interface, one async, atomic method:
+
+```
+hit(key, nowMs, windowMs, limit) -> Promise<{ allowed, oldestMs }>
+```
+
+`createMemoryStore()` is the default. A shared store (e.g. Redis: one Lua
+script doing `ZREMRANGEBYSCORE`, `ZCARD`, `ZADD`, `ZRANGE`, `PEXPIRE` on a
+sorted set per key) implements the same method and is passed to
+`createApp(config, db, { rateLimitStore })`. Redis is not included. If the
+store throws, the sign-in fails with 500 rather than going unlimited.
 
 The client IP comes from the socket unless `TRUST_PROXY` says how many proxy
 hops to believe in `X-Forwarded-For` (Express `trust proxy` with a hop count):
