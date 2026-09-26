@@ -251,6 +251,8 @@ git rev-parse HEAD origin/iter2/criteria   # two identical SHAs
 
 - [AC-T5 min/max] DECISION (owner, option B) — commit d4bb0b5 — no code change. The ask prompt's numeric `min`/`max` are computed over every value and can be values `/anomalies` flags (e.g. `max: 95` on the spike fixture); this is **known behaviour**, documented in README "Asking a question, and what the model sees". The anomaly result itself (rows, rules) never reaches the prompt, as `anomalies.test.js` asserts. AC-T4 and `ask.test.js` untouched. Resolves the AC-T5 OWNER-PENDING.
 
+- [Scope C] DECISION (owner, option B) — moved to iteration 3 (§11): deferred, undefined. Supersedes both Scope C OWNER-PENDING entries above.
+
 **Iteration 2 status:** AC-T4…AC-T8 `[x]`; Scope E done; Scope C OWNER-PENDING (undefined). Owner decisions open in §8: AC-T5 min/max in the prompt, AC-T6 token revocation on logout, Scope C definition, and a real `docker build` of Scope E.
 
 ---
@@ -266,3 +268,9 @@ git rev-parse HEAD origin/iter2/criteria   # two identical SHAs
 - Swapping SQLite for a networked database
 - Text-to-SQL, or executing any model-generated code
 - Multi-turn / conversational querying; each `/ask` is independent
+
+---
+
+## 11. Iteration 3 backlog
+
+- **Scope C** — deferred, undefined. Named in the iteration-2 prompt ("Scope C leftovers") but never given acceptance criteria; moved here by owner decision. Needs criteria before any work starts.
