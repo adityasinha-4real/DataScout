@@ -133,14 +133,19 @@ alone — it never stores the token. API clients can still send
 `Authorization: Bearer <token>` from the login response. `POST /api/auth/logout`
 clears the cookie.
 
-- `CORS_ORIGIN` must name the frontend's exact origin(s); a wildcard is refused.
-- The frontend and the API must be on the **same registrable domain**
-  (`app.example.com` + `api.example.com` works; `something.vercel.app` +
-  `api.fly.dev` does not). Browsers never attach a `SameSite=Lax` cookie to a
-  cross-site `fetch`, so a split-domain deployment signs in and then gets 401
-  on every request. Locally, use the same host name on both sides:
-  `localhost:5173` with `localhost:4000`, not `localhost` with `127.0.0.1`.
-- `Secure` cookies are only sent over HTTPS, so run production behind TLS.
+The browser only ever calls relative `/api/...` paths on the page's own
+origin. In production Vercel rewrites them to the API (`frontend/vercel.mjs`);
+in dev and e2e Vite's proxy does the same (`frontend/vite.config.ts`). So the
+cookie is first-party, no CORS is involved, and the API can live on any
+domain.
+
+- Leave `VITE_API_BASE_URL` blank. An absolute URL makes the app cross-origin
+  again, which then needs `CORS_ORIGIN` and a shared registrable domain
+  (browsers never attach a `SameSite=Lax` cookie to a cross-site `fetch`).
+- `CORS_ORIGIN` is empty by default in production, so the API sends no CORS
+  headers to anyone. If set, it must list exact `https://` origins; `*` is
+  refused at boot.
+- `Secure` cookies are only sent over HTTPS, so production runs behind TLS.
 
 ### Sign-in rate limit and proxies
 
@@ -164,22 +169,30 @@ The client IP comes from the socket unless `TRUST_PROXY` is set:
 
 Nothing here deploys anything; these are the steps and the constraints.
 
-**The one hard constraint:** the session cookie is `SameSite=Lax`, so the
-frontend and the API must share a registrable domain — for example
-`app.example.com` (Vercel) and `api.example.com` (the container). A
-`*.vercel.app` frontend talking to an API on another domain will sign in and
-then get 401 on every request. The same applies to Vercel preview deployments
-on `*.vercel.app` URLs: they cannot hold a session against the production API.
+```
+browser ──https──▶ app.example.com (Vercel)
+                     ├─ static files from frontend/dist
+                     └─ /api/*  ──rewrite──▶  $API_ORIGIN/api/*  (the container)
+```
+
+The browser talks to one origin only. The API's address is configuration
+(`API_ORIGIN` in the Vercel project), never a literal in the code.
 
 ### API: Docker
 
 ```bash
 docker build -t datascout-api backend
-docker run -d --name datascout-api -p 4000:4000   -v datascout-data:/data   -e JWT_SECRET="$(openssl rand -hex 48)"   -e CORS_ORIGIN=https://app.example.com   -e TRUST_PROXY=1   datascout-api
+docker run -d --name datascout-api -p 4000:4000 \
+  -v datascout-data:/data \
+  -e JWT_SECRET="$(openssl rand -hex 48)" \
+  datascout-api
 ```
 
 - The image sets `NODE_ENV=production`, so cookies are `Secure`: serve the API
-  over HTTPS (a platform router or a TLS-terminating proxy in front).
+  over HTTPS (a platform router or a TLS-terminating proxy in front), since
+  Vercel's rewrite forwards the session cookie to it.
+- No `CORS_ORIGIN` is needed: every browser request arrives via the same-origin
+  rewrite. Leave it unset and the API answers no cross-origin request.
 - The database is `/data/datascout.db` on the `datascout-data` volume. Replace
   the container freely; keep the volume. Back it up by copying that file while
   the container is stopped.
@@ -188,6 +201,7 @@ docker run -d --name datascout-api -p 4000:4000   -v datascout-data:/data   -e J
 - `TRUST_PROXY=1` when exactly one proxy sits in front (the usual case on a
   hosting platform); `0` if clients connect straight to the container.
 - Runs as the unprivileged `node` user, with a `HEALTHCHECK` on `/api/health`.
+  `docker stop` shuts it down cleanly on SIGTERM.
 - Set `ANTHROPIC_API_KEY` (and optionally `LLM_MODEL`) to enable "Ask a
   question"; without it `/ask` answers 503 and everything else works.
 
@@ -195,13 +209,20 @@ docker run -d --name datascout-api -p 4000:4000   -v datascout-data:/data   -e J
 
 1. Import the repo and set **Root Directory** to `frontend`. Vercel detects
    Vite: build `npm run build`, output `dist`.
-2. Add the environment variable `VITE_API_BASE_URL=https://api.example.com`.
-   It is read at **build** time, so redeploy after changing it.
-3. Attach the custom domain (`app.example.com`), and set the API's
-   `CORS_ORIGIN` to exactly that origin.
+2. Add the environment variable `API_ORIGIN=https://api.example.com` (the
+   container's https origin, no path). `frontend/vercel.mjs` reads it at build
+   time and **fails the build** if it is missing, not https, or has a path.
+   Redeploy after changing it.
+3. Leave `VITE_API_BASE_URL` unset.
 
-`frontend/vercel.json` rewrites unknown paths to `index.html`, so a refresh on
-a client-side route such as `/datasets/<id>` loads the app instead of a 404.
+`vercel.mjs` (it replaces `vercel.json`; Vercel allows only one) defines two
+rewrites, in order: `/api/:path*` → `$API_ORIGIN/api/:path*`, then everything
+else → `index.html`, so a refresh on `/datasets/<id>` loads the app. Real
+files in `dist/` are served before either rewrite applies.
+
+Preview deployments get their own origin and rewrite to whatever
+`API_ORIGIN` the Preview environment sets — point it at a staging API, or
+previews will read and write production data.
 
 ## Project layout
 

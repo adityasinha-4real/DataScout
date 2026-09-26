@@ -249,6 +249,58 @@ describe('CORS with credentials', () => {
     }
   });
 
+  test('production defaults to same-origin only: no CORS headers for anyone', async () => {
+    assert.deepEqual(
+      loadConfig({ JWT_SECRET: 'z'.repeat(40), NODE_ENV: 'production' }).corsOrigins,
+      [],
+    );
+    const { baseUrl } = await startServerWith({ llm: null }, { NODE_ENV: 'production' });
+    for (const origin of [FRONTEND, 'https://app.example.com', 'https://evil.example']) {
+      const simple = await api(baseUrl, '/api/health', { headers: { origin } });
+      assert.equal(simple.status, 200);
+      assert.equal(simple.headers.get('access-control-allow-origin'), null, origin);
+      assert.equal(simple.headers.get('access-control-allow-credentials'), null, origin);
+
+      const preflight = await api(baseUrl, '/api/auth/login', {
+        method: 'OPTIONS',
+        headers: { origin, 'access-control-request-method': 'POST' },
+      });
+      assert.equal(preflight.headers.get('access-control-allow-origin'), null, origin);
+    }
+    // Same-origin traffic (what the /api rewrite delivers) still works.
+    const register = await api(baseUrl, '/api/auth/register', {
+      method: 'POST',
+      json: { email: freshEmail(), password: 'correct-horse-9' },
+    });
+    assert.equal(register.status, 201);
+  });
+
+  test('in production an explicit CORS_ORIGIN must be https', async () => {
+    const prod = { JWT_SECRET: 'z'.repeat(40), NODE_ENV: 'production' };
+    assert.throws(
+      () => loadConfig({ ...prod, CORS_ORIGIN: 'http://app.example.com' }),
+      /https origins in production/,
+    );
+    assert.throws(
+      () => loadConfig({ ...prod, CORS_ORIGIN: 'https://a.example.com,http://b.example.com' }),
+      /http:\/\/b\.example\.com/,
+    );
+    assert.throws(() => loadConfig({ ...prod, CORS_ORIGIN: '*' }), /exact origins/);
+    assert.deepEqual(
+      loadConfig({ ...prod, CORS_ORIGIN: 'https://app.example.com/' }).corsOrigins,
+      ['https://app.example.com'],
+    );
+
+    const { baseUrl } = await startServerWith(
+      { llm: null },
+      { NODE_ENV: 'production', CORS_ORIGIN: 'https://app.example.com' },
+    );
+    const allowed = await api(baseUrl, '/api/health', {
+      headers: { origin: 'https://app.example.com' },
+    });
+    assert.equal(allowed.headers.get('access-control-allow-origin'), 'https://app.example.com');
+  });
+
   test('a wildcard or empty CORS_ORIGIN refuses to boot', () => {
     const base = { JWT_SECRET: 'z'.repeat(40) };
     assert.throws(() => loadConfig({ ...base, CORS_ORIGIN: '*' }), ConfigError);

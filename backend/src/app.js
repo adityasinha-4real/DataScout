@@ -68,12 +68,15 @@ export function createApp(config, db, deps = {}) {
     now: deps.now ?? Date.now,
   });
 
-  app.use(
-    cors({
-      origin: corsOrigin(config.corsOrigins),
-      credentials: true,
-    }),
-  );
+  // No allowlist, no CORS: every cross-origin read is refused by the browser.
+  if (config.corsOrigins.length > 0) {
+    app.use(
+      cors({
+        origin: corsOrigin(config.corsOrigins),
+        credentials: true,
+      }),
+    );
+  }
   app.use(express.json({ limit: '1mb' }));
   app.use(
     express.text({

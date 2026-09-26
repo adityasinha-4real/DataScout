@@ -9,9 +9,11 @@ import type {
 } from './types';
 
 /**
- * The API origin is injected at build time. There is no literal fallback on
- * purpose: shipping a build without VITE_API_BASE_URL should be loud, and a
- * hardcoded localhost would silently work in dev and break everywhere else.
+ * Blank (the normal case) means requests go to relative /api paths on the
+ * page's own origin: Vercel rewrites them to the API in production, and Vite's
+ * proxy does the same in dev and e2e. Same-origin means no CORS and a
+ * first-party session cookie. VITE_API_BASE_URL is only for a deliberate
+ * cross-origin setup, and there is still no hardcoded host to fall back on.
  */
 const BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? '';
 

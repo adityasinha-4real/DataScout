@@ -38,9 +38,15 @@ function integer(name, fallback) {
  * Comma-separated list of exact origins. A wildcard is refused outright: the
  * API sends credentials, and browsers reject `*` with credentials anyway, so
  * accepting it would only defer the failure to the first cross-origin call.
+ *
+ * Blank means no cross-origin access at all, which is the production default:
+ * the frontend reaches the API through a same-origin /api rewrite, so no
+ * browser needs CORS. When set in production, every origin must be https.
  */
-function origins(name, fallback) {
-  const list = optional(name, fallback)
+function origins(name, fallback, requireHttps) {
+  const raw = optional(name, fallback);
+  if (raw === '') return [];
+  const list = raw
     .split(',')
     .map((origin) => origin.trim().replace(/\/+$/, ''))
     .filter((origin) => origin !== '');
@@ -48,6 +54,12 @@ function origins(name, fallback) {
     throw new ConfigError(
       `Environment variable ${name} must list exact origins, not "*": ` +
         'the API sends credentials, which browsers never allow with a wildcard.',
+    );
+  }
+  const insecure = requireHttps && list.find((o) => !o.startsWith('https://'));
+  if (insecure) {
+    throw new ConfigError(
+      `Environment variable ${name} must list https origins in production, got "${insecure}".`,
     );
   }
   return list;
@@ -90,7 +102,11 @@ export function loadConfig(env = process.env) {
       databaseUrl: optional('DATABASE_URL', './data/datascout.db'),
       jwtSecret,
       jwtExpiresIn: integer('JWT_EXPIRES_IN', 3600),
-      corsOrigins: origins('CORS_ORIGIN', 'http://localhost:5173'),
+      corsOrigins: origins(
+        'CORS_ORIGIN',
+        nodeEnv === 'production' ? '' : 'http://localhost:5173',
+        nodeEnv === 'production',
+      ),
       maxUploadBytes: integer('MAX_UPLOAD_BYTES', 10 * 1024 * 1024),
       authRateLimitPerMin: integer('AUTH_RATE_LIMIT_PER_MIN', 10),
       // Reverse-proxy hops to trust for the client IP. 0 (default) means the

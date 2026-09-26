@@ -1,8 +1,10 @@
 # DataScout API. Build from this directory:
 #
 #   docker build -t datascout-api backend
-#   docker run -p 4000:4000 -v datascout-data:/data \
-#     -e JWT_SECRET=... -e CORS_ORIGIN=https://app.example.com datascout-api
+#   docker run -p 4000:4000 -v datascout-data:/data -e JWT_SECRET=... datascout-api
+#
+# No CORS_ORIGIN: browsers reach the API through the frontend's same-origin
+# /api rewrite (frontend/vercel.mjs), so it answers no cross-origin requests.
 #
 # The SQLite file lives on the /data volume, so it survives container
 # replacement. Everything else in the image is disposable.
