@@ -227,6 +227,21 @@ Iteration 2, on `iter2/criteria` against base `main` @ 52d3b72:
 
 - [Scope E] DONE (verified) — image from commit a8a1a3a, built and run for real (Docker 29.5.3, linux/amd64): `docker build -t datascout-api backend` succeeded; on fresh named volume `datascout-verify-1790417960`, `/api/health` → `{"status":"ok","db":"connected"}`; registered, uploaded a 2-row dataset (201); `docker restart` → login 200 and the dataset still listed; process runs as `uid=1000(node)`, `/data` is `node:node 755`, `datascout.db` is `node:node 644`; `docker stop` took 961 ms (grace 10 s), `ExitCode=0`, the only kill event was `signal=15` — no SIGKILL. Supersedes the "not built" NOTE above. Test container and volume removed afterwards.
 
+### Goal checks (replaces the root `verify.sh` diff)
+
+The earlier check `git diff bbc0b61 -- verify.sh` proved nothing: there is no root `verify.sh`, and `git diff` on a path absent everywhere prints nothing and exits 0. The goal check is now:
+
+```bash
+bash scripts/verify.sh              # last line: ALL CHECKS PASSED
+bash scripts/goal-check.sh          # = git diff bbc0b61 -- scripts/verify.sh + the 8 guarded tests,
+                                    #   failing by name if any path is missing at bbc0b61, HEAD or on disk
+grep -n "SHA_" PLAN.md              # no output
+git status                          # clean
+git rev-parse HEAD origin/iter2/criteria   # two identical SHAs
+```
+
+`scripts/goal-check.sh` added in commit bacf83b. Proven in the transcript: default run → `GOAL-CHECK PASS: 9 paths present…` (exit 0); a nonexistent path → `GOAL-CHECK FAIL: missing at bbc0b61 / HEAD / in working tree` (exit 1) where plain `git diff` on the same path exits 0; a file added after the base → fail; a committed change → fail; an uncommitted change → fail; a bad base ref → fail.
+
 **Iteration 2 status:** AC-T4…AC-T8 `[x]`; Scope E done; Scope C OWNER-PENDING (undefined). Owner decisions open in §8: AC-T5 min/max in the prompt, AC-T6 token revocation on logout, Scope C definition, and a real `docker build` of Scope E.
 
 ---
