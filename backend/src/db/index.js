@@ -13,7 +13,10 @@ CREATE TABLE IF NOT EXISTS users (
   email         TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   created_at    TEXT NOT NULL,
-  token_version INTEGER NOT NULL DEFAULT 0
+  token_version INTEGER NOT NULL DEFAULT 0,
+  -- JSON array of {"sid": string, "until": epoch seconds}: sessions signed
+  -- out one at a time, kept until no token of theirs can still be valid.
+  revoked_sessions TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS datasets (
@@ -56,6 +59,11 @@ export function applySchema(db) {
     // at all, so they stop working and those users sign in once more.
     db.exec(
       'ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0',
+    );
+  }
+  if (!userColumns.includes('revoked_sessions')) {
+    db.exec(
+      "ALTER TABLE users ADD COLUMN revoked_sessions TEXT NOT NULL DEFAULT '[]'",
     );
   }
 }

@@ -88,24 +88,23 @@ export function authRouter(config, db, sessions, limiter) {
   });
 
   /**
-   * Clears the cookie and, when the request carries a currently valid token,
-   * bumps the user's token_version so every token issued before now — on
-   * this device or any other, copied or not — is refused from here on.
-   *
-   * Only a *valid* token can do that: a stale or revoked one just gets the
-   * cookie cleared, so replaying an old token cannot keep logging the real
-   * user out. Signing out when already signed out is not an error.
+   * Both sign-outs clear the cookie and answer 204, signed in or not. Only a
+   * *currently valid* token revokes anything: a stale or already-revoked one
+   * just gets the cookie cleared, so replaying an old token can never log the
+   * real user out.
    */
-  router.post('/auth/logout', (req, res) => {
-    const user = sessions.current(req)?.user;
-    if (user) {
-      db.prepare(
-        'UPDATE users SET token_version = token_version + 1 WHERE id = ? AND token_version = ?',
-      ).run(user.id, user.token_version);
-    }
+  const signOut = (revoke) => (req, res) => {
+    const session = sessions.current(req);
+    if (session) revoke(session);
     clearSessionCookie(res, config);
     res.status(204).end();
-  });
+  };
+
+  /** This session only: other devices stay signed in. */
+  router.post('/auth/logout', signOut(sessions.revokeSession));
+
+  /** Every session of this user, on every device, copies included. */
+  router.post('/auth/logout-all', signOut(sessions.revokeAll));
 
   router.get('/auth/me', sessions.requireAuth, (req, res) => {
     res.json({ user: req.user });

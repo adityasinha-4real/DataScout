@@ -81,7 +81,8 @@ error response has the shape `{ "error": { "code": "...", "message": "..." } }`.
 | `POST`   | `/api/auth/register`        | Create an account, returns a token           |
 | `POST`   | `/api/auth/login`           | Exchange credentials for a token             |
 | `GET`    | `/api/auth/me`              | The current user                             |
-| `POST`   | `/api/auth/logout`          | Clear the session cookie (204)               |
+| `POST`   | `/api/auth/logout`          | End this session (204)                       |
+| `POST`   | `/api/auth/logout-all`      | End every session of this user (204)         |
 | `POST`   | `/api/datasets?name=`       | Upload CSV as `Content-Type: text/csv`       |
 | `GET`    | `/api/datasets`             | List your datasets                           |
 | `GET`    | `/api/datasets/:id`         | One dataset's summary                        |
@@ -149,12 +150,20 @@ Signing in sets an `HttpOnly; SameSite=Lax; Path=/` cookie (plus `Secure` when
 alone — it never stores the token. API clients can still send
 `Authorization: Bearer <token>` from the login response.
 
-`POST /api/auth/logout` clears the cookie **and revokes every token issued
-before it**: each user has a `token_version`, every token carries the version
-it was issued at, and logout increments it. A copy of the token taken off the
-machine is refused from then on, on every device. Signing in again issues a
-token at the new version. Only a currently valid token can trigger that bump,
-so replaying an old one cannot keep logging the user out.
+Two ways to sign out, both `POST`, both answering 204 and clearing the cookie:
+
+- `POST /api/auth/logout` ends **this session only**. Every token carries a
+  session id (`sid`) that sliding re-issue keeps, and logout records that
+  `sid` as revoked, so every token the session ever held, copies included,
+  is refused. Other devices stay signed in.
+- `POST /api/auth/logout-all` ends **every session** of the user: it bumps the
+  user's `token_version`, which every token carries, so all earlier tokens on
+  every device are refused.
+
+Only a currently valid token can trigger either one; a stale or revoked token
+just gets the cookie cleared, so replaying an old token can never log the user
+out. Revoked `sid`s are kept only until no token of theirs can still be alive
+(revocation time + TTL) and pruned on the next write.
 
 Tokens live `JWT_EXPIRES_IN` seconds, 900 (15 minutes) by default. Browser
 sessions slide: any cookie-authenticated request made after half a token's
