@@ -13,9 +13,16 @@
 # so the slim image with no compiler is enough.
 FROM node:24-slim
 
+# TRUST_PROXY=1: in production the API always sits behind at least one proxy
+# (the platform's router, reached via the frontend's /api rewrite). With the
+# default of 0, req.ip would be that proxy's address for every request, and
+# every client would share one sign-in rate-limit bucket. Override with -e
+# TRUST_PROXY=2 when two proxies stand in front (README "Deployment"), and
+# never expose the container directly while it trusts X-Forwarded-For.
 ENV NODE_ENV=production \
     PORT=4000 \
-    DATABASE_URL=/data/datascout.db
+    DATABASE_URL=/data/datascout.db \
+    TRUST_PROXY=1
 
 WORKDIR /app
 

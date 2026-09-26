@@ -152,18 +152,32 @@ domain.
 `POST /api/auth/login` and `/api/auth/register` share a per-IP budget of
 `AUTH_RATE_LIMIT_PER_MIN` requests (default 10) in any sliding 60-second
 window. The next request gets `429 RATE_LIMITED` with `Retry-After` in whole
-seconds. Other routes, including logout, are never limited. Counters live in
-memory in each process, so they reset on restart and are not shared across
-replicas.
+seconds. Other routes, including logout, are never limited.
 
-The client IP comes from the socket unless `TRUST_PROXY` is set:
+**The limiter is in-memory, per process.** Restarting the API (a deploy, a
+crash, `docker restart`) resets every counter, and two replicas would each
+keep their own, so a client spread across N replicas gets N× the budget.
+That is acceptable here only because SQLite already pins the API to one
+instance; scaling out would need a shared store (e.g. Redis) for the limiter
+as well as a networked database.
 
-- `TRUST_PROXY=0` (default): `X-Forwarded-For` is ignored, so a client cannot
-  pick its own IP to escape the limit. Correct when clients connect directly.
-- `TRUST_PROXY=N`: trust the last N proxy hops. Set `1` behind a single load
-  balancer or platform router; otherwise every client appears as the proxy's
-  IP and all share one budget. Never set it higher than the real number of
-  hops, or clients can forge the header.
+The client IP comes from the socket unless `TRUST_PROXY` says how many proxy
+hops to believe in `X-Forwarded-For`:
+
+- `TRUST_PROXY=0` — the **code default**. `X-Forwarded-For` is ignored, so a
+  client cannot pick its own IP. Right for local dev and for clients
+  connecting straight to the process.
+- `TRUST_PROXY=1` — **set in the production image** (`backend/Dockerfile`).
+  In production the API always sits behind a proxy; with `0`, `req.ip` would
+  be the proxy's address on every request and *all clients would share one
+  rate-limit bucket*, so one noisy client locks everyone out of sign-in.
+- `TRUST_PROXY=2` — when two proxies stand in front, e.g. Vercel's rewrite
+  *and* the API host's own router: with `1`, every client would appear as a
+  Vercel egress address. Count the hops for your host and set it exactly.
+
+Never set it higher than the real number of hops, and do not expose the
+container directly to the internet while it trusts the header: a client that
+can reach it without the proxy can put any address in `X-Forwarded-For`.
 
 ## Deployment
 
@@ -198,8 +212,9 @@ docker run -d --name datascout-api -p 4000:4000 \
   the container is stopped.
 - SQLite means **one** API instance. Do not run replicas against the same
   volume, and note the sign-in rate limit is per process too.
-- `TRUST_PROXY=1` when exactly one proxy sits in front (the usual case on a
-  hosting platform); `0` if clients connect straight to the container.
+- The image sets `TRUST_PROXY=1` (see "Sign-in rate limit and proxies"):
+  use `-e TRUST_PROXY=2` if both Vercel's rewrite and your host's router sit
+  in front, and keep the container reachable only through them.
 - Runs as the unprivileged `node` user, with a `HEALTHCHECK` on `/api/health`.
   `docker stop` shuts it down cleanly on SIGTERM.
 - Set `ANTHROPIC_API_KEY` (and optionally `LLM_MODEL`) to enable "Ask a

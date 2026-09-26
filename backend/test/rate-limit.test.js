@@ -190,6 +190,37 @@ describe('client IP and proxies', () => {
   });
 });
 
+describe('TRUST_PROXY on versus off, same traffic', () => {
+  /** Two clients, as a proxy would present them, one attempt each after a first. */
+  async function twoForwardedClients(overrides) {
+    const clock = manualClock();
+    const { baseUrl } = await startServerWith(
+      { llm: null, now: clock.now },
+      { AUTH_RATE_LIMIT_PER_MIN: '1', ...overrides },
+    );
+    const first = await badLogin(baseUrl, { 'x-forwarded-for': '198.51.100.10' });
+    const second = await badLogin(baseUrl, { 'x-forwarded-for': '198.51.100.20' });
+    return [first.status, second.status];
+  }
+
+  test('on: two forwarded IPs get separate buckets', async () => {
+    assert.deepEqual(await twoForwardedClients({ TRUST_PROXY: '1' }), [401, 401]);
+  });
+
+  test('off: the same two forwarded IPs share one bucket', async () => {
+    assert.deepEqual(await twoForwardedClients({ TRUST_PROXY: '0' }), [401, 429]);
+    assert.deepEqual(await twoForwardedClients({}), [401, 429], 'off is the default');
+  });
+
+  test('the production image turns it on', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const dockerfile = await readFile(new URL('../Dockerfile', import.meta.url), 'utf8');
+    const env = /^ENV\s+((?:.*\\\r?\n)*.*)$/m.exec(dockerfile)?.[1] ?? '';
+    assert.match(env, /\bTRUST_PROXY=1\b/);
+    assert.match(env, /\bNODE_ENV=production\b/);
+  });
+});
+
 describe('limiter unit and config', () => {
   test('keys that go quiet are swept, so memory does not grow without bound', () => {
     const clock = manualClock();
