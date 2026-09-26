@@ -235,7 +235,7 @@ The earlier check `git diff bbc0b61 -- verify.sh` proved nothing: there is no ro
 bash scripts/verify.sh              # last line: ALL CHECKS PASSED
 bash scripts/goal-check.sh          # = git diff bbc0b61 -- scripts/verify.sh + the 8 guarded tests,
                                     #   failing by name if any path is missing at bbc0b61, HEAD or on disk
-grep -n "SHA_" PLAN.md              # no output
+grep -n "SHA[_]" PLAN.md            # no output; same match as "SHA" + "_", written so this line cannot match itself
 git status                          # clean
 git rev-parse HEAD origin/iter2/criteria   # two identical SHAs
 ```
