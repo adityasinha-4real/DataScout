@@ -12,9 +12,9 @@ are never visible to another.
 | Layer    | Choice                                                            |
 | -------- | ----------------------------------------------------------------- |
 | Backend  | Node 22+ (ESM), Express 5, SQLite via Node's built-in `node:sqlite` |
-| Auth     | scrypt password hashing (`node:crypto`), HS256 JWT bearer tokens    |
+| Auth     | scrypt (`node:crypto`), HS256 JWTs in an HttpOnly cookie (or Bearer) |
 | Frontend | React 19 + TypeScript, built with Vite                              |
-| Tests    | `node --test` with built-in coverage; Playwright for the e2e smoke  |
+| Tests    | `node --test` + coverage, Vitest + Testing Library, Playwright e2e   |
 
 There is no external database server to install: `node:sqlite` writes a local
 file in development and runs entirely in memory under test.
@@ -29,6 +29,9 @@ npm ci --prefix e2e
 npm run start --prefix backend
 npm run dev --prefix frontend
 ```
+
+The last two commands each keep running: use two terminals. Needs Node 22.5+
+(developed on 24).
 
 Edit `.env` first — `JWT_SECRET` is required and must be at least 32
 characters. Generate one with:
@@ -138,55 +141,80 @@ and blank ones become `column_N`.
 
 ## Environment
 
-Every variable the code reads is documented in [.env.example](.env.example).
-`JWT_SECRET` is required; the server refuses to boot without it rather than
-failing later on a request. The frontend reads its API origin from
-`VITE_API_BASE_URL` at build time — there is no hardcoded fallback.
+Every variable the code reads is listed in [.env.example](.env.example) with a
+comment; `cp .env.example .env` gives a working development setup once
+`JWT_SECRET` is filled in. The backend reads `.env` (repo root or `backend/`)
+via `npm run start`/`dev`; the Docker image takes `-e` flags instead.
 
-### Sessions and origins
+| Variable | Read by | Default | In production |
+| --- | --- | --- | --- |
+| `JWT_SECRET` | backend | none | **Required**, ≥ 32 chars; the server exits 1 without it |
+| `NODE_ENV` | backend | `development` | `production` (the image sets it): `Secure` cookies, no stack traces, stricter CORS, TRUST_PROXY required |
+| `PORT` | backend | `4000` | any |
+| `DATABASE_URL` | backend | `./data/datascout.db` | image: `/data/datascout.db` on the volume |
+| `JWT_EXPIRES_IN` | backend | `900` (15 min) | image: `900` |
+| `TRUST_PROXY` | backend | unset = off | **Required**: the measured proxy hop count, `0` allowed. The server refuses to start without it ([Measuring TRUST_PROXY](#measuring-trust_proxy)) |
+| `DEBUG_IP_ENDPOINT` | backend | `0` | `0`; set `1` only while measuring TRUST_PROXY |
+| `AUTH_RATE_LIMIT_PER_MIN` | backend | `10` | optional |
+| `CORS_ORIGIN` | backend | `http://localhost:5173` (dev); empty (production) | leave empty (same-origin); if set, exact `https://` origins only; `*` refused |
+| `MAX_UPLOAD_BYTES` | backend | `10485760` (10 MiB) | optional |
+| `ANTHROPIC_API_KEY` | backend | empty | optional; empty → `/ask` answers 503, everything else works |
+| `LLM_MODEL` | backend | `claude-sonnet-5` | optional |
+| `VITE_API_BASE_URL` | frontend build | empty (relative `/api`) | leave empty |
+| `API_PROXY_TARGET` | `vite dev` / `vite preview` | `http://localhost:4000` | not used |
+| `API_ORIGIN` | Vercel build (`frontend/vercel.mjs`) | none | **Required** on Vercel: the API's `https://` origin, no path; the build fails otherwise |
+| `E2E_API_PORT` / `E2E_WEB_PORT` | Playwright | `4310` / `4311` | not used |
 
-Signing in sets an `HttpOnly; SameSite=Lax; Path=/` cookie (plus `Secure` when
-`NODE_ENV=production`), and the browser client authenticates with that cookie
-alone — it never stores the token. API clients can still send
-`Authorization: Bearer <token>` from the login response.
+## Authentication
 
-Two ways to sign out, both `POST`, both answering 204 and clearing the cookie:
+**Accounts.** `POST /api/auth/register` and `/api/auth/login` take
+`{ email, password }` (password ≥ 8 chars, stored as a scrypt digest). Both
+set the session cookie and also return `{ user, token, expiresIn }`, so
+non-browser clients can use `Authorization: Bearer <token>` instead. A sent
+`Authorization` header always wins over the cookie.
 
-- `POST /api/auth/logout` ends **this session only**. Every token carries a
-  session id (`sid`) that sliding re-issue keeps, and logout records that
-  `sid` as revoked, so every token the session ever held, copies included,
-  is refused. Other devices stay signed in.
-- `POST /api/auth/logout-all` ends **every session** of the user: it bumps the
-  user's `token_version`, which every token carries, so all earlier tokens on
-  every device are refused.
+**The cookie.** `datascout_session`, `HttpOnly; SameSite=Lax; Path=/;
+Max-Age=<TTL>`, plus `Secure` when `NODE_ENV=production`. The browser client
+never sees or stores the token (no `localStorage`), and sends every request
+with `credentials: 'include'`.
 
-Only a currently valid token can trigger either one; a stale or revoked token
-just gets the cookie cleared, so replaying an old token can never log the user
-out. Revoked `sid`s are kept only until no token of theirs can still be alive
-(revocation time + TTL) and pruned on the next write.
+**Same origin.** The browser only calls relative `/api/...` paths. Vercel
+rewrites them to the API in production (`frontend/vercel.mjs`); Vite's proxy
+does the same in dev, preview and e2e. So the cookie is first-party, no CORS
+is involved, and the API can run on any domain. Setting `VITE_API_BASE_URL`
+to an absolute URL makes the app cross-origin again, which then needs
+`CORS_ORIGIN` and a shared registrable domain (a `SameSite=Lax` cookie is
+never attached to a cross-site `fetch`).
 
-Tokens live `JWT_EXPIRES_IN` seconds, 900 (15 minutes) by default. Browser
-sessions slide: any cookie-authenticated request made after half a token's
-lifetime has passed gets the cookie re-set with a fresh token (same flags,
-current `token_version`). So an active user stays signed in, and an idle one
-is signed out 15 minutes after their last request. Bearer clients are never
+**Lifetime and sliding sessions.** A token lives `JWT_EXPIRES_IN` seconds
+(900 = 15 minutes). A cookie-authenticated request made after half that
+lifetime gets the cookie re-set with a fresh token for the same session, at
+the user's current `token_version`, with the same flags. An active user stays
+signed in; an idle one is signed out 15 minutes after their last request.
+There is no refresh token and no extra endpoint. Bearer clients are never
 given a cookie; they sign in again when their token expires.
 
-The browser only ever calls relative `/api/...` paths on the page's own
-origin. In production Vercel rewrites them to the API (`frontend/vercel.mjs`);
-in dev and e2e Vite's proxy does the same (`frontend/vite.config.ts`). So the
-cookie is first-party, no CORS is involved, and the API can live on any
-domain.
+**Signing out.** Both are `POST`, answer 204 and clear the cookie:
 
-- Leave `VITE_API_BASE_URL` blank. An absolute URL makes the app cross-origin
-  again, which then needs `CORS_ORIGIN` and a shared registrable domain
-  (browsers never attach a `SameSite=Lax` cookie to a cross-site `fetch`).
-- `CORS_ORIGIN` is empty by default in production, so the API sends no CORS
-  headers to anyone. If set, it must list exact `https://` origins; `*` is
-  refused at boot.
-- `Secure` cookies are only sent over HTTPS, so production runs behind TLS.
+- `POST /api/auth/logout` ends **this session only**. Every token carries a
+  session id (`sid`) that sliding re-issue keeps; logout records it as
+  revoked, so every token the session ever held, copies included, is refused.
+  Other devices stay signed in.
+- `POST /api/auth/logout-all` ends **every session** of the user by bumping
+  their `token_version`, which every token carries.
 
-### Sign-in rate limit and proxies
+Only a currently valid token can trigger either one; a stale or revoked token
+just gets the cookie cleared, so replaying an old token can never log the
+user out. Revoked `sid`s are kept only until no token of theirs can still be
+alive (revocation time + TTL) and pruned on the next write.
+
+**CSRF.** No route that changes state answers `GET` (a test walks the router
+to enforce it); cross-site `POST`/`DELETE` carry no `SameSite=Lax` cookie;
+production sends no CORS headers, so cross-origin preflights fail. The one
+residual: `SameSite` is per *site*, so an untrusted subdomain sharing the
+app's registrable domain could still send cookie-bearing `POST`s.
+
+## Sign-in rate limit and proxies
 
 `POST /api/auth/login` and `/api/auth/register` share a per-IP budget of
 `AUTH_RATE_LIMIT_PER_MIN` requests (default 10) in any sliding 60-second
@@ -317,9 +345,33 @@ previews will read and write production data.
 ## Project layout
 
 ```
-backend/    Express API, CSV engine, SQLite persistence (Dockerfile)
-  src/csv/  parse, profile and query — framework-free and unit tested
-frontend/   React + TypeScript client
-e2e/        Playwright smoke test of the primary user flow
-scripts/    verify.sh — the full acceptance gate
+backend/            Express API, CSV engine, SQLite persistence, Dockerfile
+  src/auth/         password hashing, JWT, session cookie, sessions (sliding,
+                    logout, logout-all), rate limiter + pluggable store
+  src/csv/          parse, profile, query, anomalies (framework-free)
+  src/llm/          the model provider and QuerySpec validation for /ask
+  src/routes/       health, auth, datasets, and the flag-gated _debug route
+  test/             node --test suites (the 8 pre-existing files are frozen)
+frontend/           React + TypeScript client
+  src/              pages, components, API client, auth context, *.test.tsx
+  vercel.mjs        Vercel config: /api rewrite to API_ORIGIN, SPA fallback
+  vite.config.ts    dev/preview /api proxy, Vitest config
+e2e/                Playwright specs against the built app and a real API
+scripts/verify.sh   the full acceptance gate (frozen)
+scripts/goal-check.sh  proves the gate and frozen tests are unchanged
 ```
+
+## Troubleshooting
+
+- **The API exits with "TRUST_PROXY must be set in production".** Intended:
+  measure the hop count ([Measuring TRUST_PROXY](#measuring-trust_proxy)) and
+  set it; `0` if clients connect directly.
+- **Signed out after a while.** Sessions end 15 minutes after the last
+  request (`JWT_EXPIRES_IN`); activity keeps them alive.
+- **401 on every request after signing in (custom setup).** The app is being
+  served cross-site from the API with an absolute `VITE_API_BASE_URL`; leave
+  it empty so `/api` goes through the rewrite or proxy.
+- **Everyone gets 429 on sign-in behind a proxy.** `TRUST_PROXY` is too low,
+  so all clients share the proxy's IP. Measure it.
+- **`/ask` answers 503.** `ANTHROPIC_API_KEY` is not set; everything else
+  works without it.
