@@ -225,6 +225,8 @@ Iteration 2, on `iter2/criteria` against base `main` @ 52d3b72:
 - [Scope E] DONE — commit a8a1a3a — backend Dockerfile + `.dockerignore`, `frontend/vercel.json`, README Deployment section. Verified by simulation, not by `docker build` (see §8 Scope E NOTE). verify.sh `21 passed, 0 failed` / `ALL CHECKS PASSED`
 - [Scope C] OWNER-PENDING — not defined anywhere in this file, the git history or `.claude/`; see §8. Two loose ends that could have been meant, both now closed: §3's "ML / data layer" line updated for AC-T5 (commit 6d28bc1), and the README deployment note on the SameSite constraint §8 asked for (commits a12fa1d, a8a1a3a).
 
+- [Scope E] DONE (verified) — image from commit a8a1a3a, built and run for real (Docker 29.5.3, linux/amd64): `docker build -t datascout-api backend` succeeded; on fresh named volume `datascout-verify-1790417960`, `/api/health` → `{"status":"ok","db":"connected"}`; registered, uploaded a 2-row dataset (201); `docker restart` → login 200 and the dataset still listed; process runs as `uid=1000(node)`, `/data` is `node:node 755`, `datascout.db` is `node:node 644`; `docker stop` took 961 ms (grace 10 s), `ExitCode=0`, the only kill event was `signal=15` — no SIGKILL. Supersedes the "not built" NOTE above. Test container and volume removed afterwards.
+
 **Iteration 2 status:** AC-T4…AC-T8 `[x]`; Scope E done; Scope C OWNER-PENDING (undefined). Owner decisions open in §8: AC-T5 min/max in the prompt, AC-T6 token revocation on logout, Scope C definition, and a real `docker build` of Scope E.
 
 ---
