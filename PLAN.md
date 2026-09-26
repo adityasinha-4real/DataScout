@@ -236,7 +236,7 @@ bash scripts/verify.sh              # last line: ALL CHECKS PASSED
 bash scripts/goal-check.sh          # = git diff bbc0b61 -- scripts/verify.sh + the 8 guarded tests,
                                     #   failing by name if any path is missing at bbc0b61, HEAD or on disk;
                                     #   the only allowed diff is the approved app.test.js:87 line
-grep -nE '^- \[[^]]+\] .*(SHA_[A-Z0-9_]+|commit <sha>)' PLAN.md
+grep -nE '^- \[[^]]+\] .*(\bSHA_[A-Z0-9_]+\b|commit <sha>)' PLAN.md
                                     # no output: no log entry holds an unfilled
                                     #   commit placeholder (also run by goal-check.sh)
 git status                          # clean
