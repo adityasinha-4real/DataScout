@@ -101,7 +101,7 @@ export function loadConfig(env = process.env) {
       port: integer('PORT', 4000),
       databaseUrl: optional('DATABASE_URL', './data/datascout.db'),
       jwtSecret,
-      jwtExpiresIn: integer('JWT_EXPIRES_IN', 3600),
+      jwtExpiresIn: integer('JWT_EXPIRES_IN', 900),
       corsOrigins: origins(
         'CORS_ORIGIN',
         nodeEnv === 'production' ? '' : 'http://localhost:5173',

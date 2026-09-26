@@ -74,7 +74,7 @@ describe('session cookie', () => {
     assert.equal(cookie.flags.httponly, true);
     assert.equal(cookie.flags.samesite, 'Lax');
     assert.equal(cookie.flags.path, '/');
-    assert.equal(cookie.flags['max-age'], '3600');
+    assert.equal(cookie.flags['max-age'], '900');
     assert.equal(cookie.flags.secure, undefined, 'plain-http dev and e2e keep working');
   });
 

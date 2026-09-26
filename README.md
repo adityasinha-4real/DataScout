@@ -156,9 +156,12 @@ machine is refused from then on, on every device. Signing in again issues a
 token at the new version. Only a currently valid token can trigger that bump,
 so replaying an old one cannot keep logging the user out.
 
-Tokens live `JWT_EXPIRES_IN` seconds: 900 (15 minutes) in the production image
-and `.env.example`. There is no refresh token, so after 15 minutes the user
-signs in again. (Unset, the code falls back to 3600.)
+Tokens live `JWT_EXPIRES_IN` seconds, 900 (15 minutes) by default. Browser
+sessions slide: any cookie-authenticated request made after half a token's
+lifetime has passed gets the cookie re-set with a fresh token (same flags,
+current `token_version`). So an active user stays signed in, and an idle one
+is signed out 15 minutes after their last request. Bearer clients are never
+given a cookie; they sign in again when their token expires.
 
 The browser only ever calls relative `/api/...` paths on the page's own
 origin. In production Vercel rewrites them to the API (`frontend/vercel.mjs`);

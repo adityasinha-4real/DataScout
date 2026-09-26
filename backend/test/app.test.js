@@ -84,7 +84,7 @@ test('loadConfig applies documented defaults', () => {
   const config = loadConfig({ JWT_SECRET: 'z'.repeat(40) });
   assert.equal(config.port, 4000);
   assert.equal(config.nodeEnv, 'development');
-  assert.equal(config.jwtExpiresIn, 3600);
+  assert.equal(config.jwtExpiresIn, 900);
   assert.equal(config.databaseUrl, './data/datascout.db');
   assert.equal(config.maxUploadBytes, 10485760);
   assert.equal(config.isProduction, false);

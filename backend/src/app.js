@@ -7,6 +7,7 @@ import { authRouter } from './routes/auth.js';
 import { datasetsRouter } from './routes/datasets.js';
 import { createProvider } from './llm/provider.js';
 import { createRateLimiter } from './auth/rateLimit.js';
+import { createSessions } from './auth/sessions.js';
 
 /**
  * Body-parser reports its own failures with a `type` field and no error code
@@ -61,12 +62,15 @@ export function createApp(config, db, deps = {}) {
   // this all clients would share one rate-limit budget. Trusting more hops
   // than really exist would let a client pick its own IP via X-Forwarded-For.
   if (config.trustProxy > 0) app.set('trust proxy', config.trustProxy);
+  // One clock for everything time-based, injectable so tests move time.
+  const now = deps.now ?? Date.now;
   // Built here, per app, so no two apps (or test files) share counters.
   const authLimiter = createRateLimiter({
     limit: config.authRateLimitPerMin,
     windowMs: 60_000,
-    now: deps.now ?? Date.now,
+    now,
   });
+  const sessions = createSessions(config, db, now);
 
   // No allowlist, no CORS: every cross-origin read is refused by the browser.
   if (config.corsOrigins.length > 0) {
@@ -86,8 +90,8 @@ export function createApp(config, db, deps = {}) {
   );
 
   app.use('/api', healthRouter(db));
-  app.use('/api', authRouter(config, db, authLimiter));
-  app.use('/api', datasetsRouter(config, db, llm));
+  app.use('/api', authRouter(config, db, sessions, authLimiter));
+  app.use('/api', datasetsRouter(config, db, llm, sessions.requireAuth));
 
   app.use(notFoundHandler());
   app.use(normalizeBodyErrors());

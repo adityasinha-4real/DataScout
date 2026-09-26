@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
 import { badRequest, notFound, unavailable } from '../errors.js';
-import { requireAuth } from '../auth/middleware.js';
 import { parseCsv, toCsv } from '../csv/parse.js';
 import { profileDataset } from '../csv/profile.js';
 import { detectAnomalies, flaggedRowIndexes } from '../csv/anomalies.js';
@@ -49,9 +48,9 @@ const askBody = z.object({
   question: z.string().trim().min(1).max(500),
 });
 
-export function datasetsRouter(config, db, llm = null) {
+export function datasetsRouter(config, db, llm, requireAuth) {
   const router = Router();
-  router.use('/datasets', requireAuth(config, db));
+  router.use('/datasets', requireAuth);
 
   /** Datasets are scoped to their owner: another user's id reads as absent. */
   const load = (req) => {

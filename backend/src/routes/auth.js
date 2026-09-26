@@ -4,13 +4,7 @@ import { z } from 'zod';
 
 import { badRequest, conflict, unauthorized } from '../errors.js';
 import { hashPassword, verifyPassword } from '../auth/password.js';
-import { signToken } from '../auth/jwt.js';
-import {
-  credentialFrom,
-  requireAuth,
-  userForToken,
-} from '../auth/middleware.js';
-import { clearSessionCookie, setSessionCookie } from '../auth/cookie.js';
+import { clearSessionCookie } from '../auth/cookie.js';
 
 const credentials = z.object({
   email: z.string().trim().min(3).max(254).email(),
@@ -40,7 +34,7 @@ const publicUser = (row) => ({
  * guess costs an attacker nothing but a request. Both draw on one per-IP
  * budget, so alternating between them buys no extra attempts.
  */
-export function authRouter(config, db, limiter = (req, res, next) => next()) {
+export function authRouter(config, db, sessions, limiter) {
   const router = Router();
 
   router.post('/auth/register', limiter, (req, res) => {
@@ -64,8 +58,7 @@ export function authRouter(config, db, limiter = (req, res, next) => next()) {
     ).run(user.id, user.email, hashPassword(password), user.created_at);
 
     // A new account starts at token_version 0 (the column default).
-    const token = signToken({ sub: user.id, ver: 0 }, config.jwtSecret, config.jwtExpiresIn);
-    setSessionCookie(res, token, config);
+    const token = sessions.issue(res, { ...user, token_version: 0 });
     // The token stays in the body too: existing API clients rely on it (C7).
     res.status(201).json({
       user: publicUser(user),
@@ -86,12 +79,7 @@ export function authRouter(config, db, limiter = (req, res, next) => next()) {
       throw unauthorized('Incorrect email or password.');
     }
 
-    const token = signToken(
-      { sub: row.id, ver: row.token_version },
-      config.jwtSecret,
-      config.jwtExpiresIn,
-    );
-    setSessionCookie(res, token, config);
+    const token = sessions.issue(res, row);
     res.json({
       user: publicUser(row),
       token,
@@ -109,8 +97,7 @@ export function authRouter(config, db, limiter = (req, res, next) => next()) {
    * user out. Signing out when already signed out is not an error.
    */
   router.post('/auth/logout', (req, res) => {
-    const token = credentialFrom(req);
-    const user = token ? userForToken(token, config, db) : null;
+    const user = sessions.current(req)?.user;
     if (user) {
       db.prepare(
         'UPDATE users SET token_version = token_version + 1 WHERE id = ? AND token_version = ?',
@@ -120,7 +107,7 @@ export function authRouter(config, db, limiter = (req, res, next) => next()) {
     res.status(204).end();
   });
 
-  router.get('/auth/me', requireAuth(config, db), (req, res) => {
+  router.get('/auth/me', sessions.requireAuth, (req, res) => {
     res.json({ user: req.user });
   });
 
