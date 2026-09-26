@@ -58,7 +58,7 @@ export function loadConfig(env = process.env) {
       port: integer('PORT', 4000),
       databaseUrl: optional('DATABASE_URL', './data/datascout.db'),
       jwtSecret,
-      jwtExpiresIn: integer('JWT_EXPIRES_IN', 3600),
+      jwtExpiresIn: integer('JWT_EXPIRES_IN', 900),
       corsOrigin: optional('CORS_ORIGIN', 'http://localhost:5173'),
       maxUploadBytes: integer('MAX_UPLOAD_BYTES', 10 * 1024 * 1024),
       // Optional on purpose: without a key /ask answers 503 and every other
