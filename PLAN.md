@@ -253,7 +253,9 @@ git rev-parse HEAD origin/iter2/criteria   # two identical SHAs
 
 - [Scope C] DECISION (owner, option B) — moved to iteration 3 (§11): deferred, undefined. Supersedes both Scope C OWNER-PENDING entries above.
 
-**Iteration 2 status:** AC-T4…AC-T8 `[x]`; Scope E done; Scope C OWNER-PENDING (undefined). Owner decisions open in §8: AC-T5 min/max in the prompt, AC-T6 token revocation on logout, Scope C definition, and a real `docker build` of Scope E.
+- [Scope E] DONE (re-verified on the final image) — built from 86352ec (image `sha256:8398fd8565f8`), fresh volume `datascout-verify-1790418904`: health ok; env `NODE_ENV=production TRUST_PROXY=1 JWT_EXPIRES_IN=900`; register 201 with `Set-Cookie: …; Path=/; Max-Age=900; HttpOnly; SameSite=Lax; Secure`; upload 201; after `docker restart` the same token still lists `Persisted (2 rows)`; logout 204 → pre-logout token 401 → re-login 200 with data intact; `uid=1000(node)`, `/data` `node:node 755`, `datascout.db` `node:node 644`; `docker stop` 846 ms, `ExitCode=0`, only `signal=15`, no SIGKILL. (A first attempt was discarded: a stray duplicate register in my script made the real one 409 — a script error, not an image fault.)
+
+**Iteration 2 status:** AC-T4…AC-T8 `[x]`; Scope E DONE (real Docker build verified); same-origin `/api` rewrite, TRUST_PROXY production default and logout revocation DONE; min/max documented as known behaviour; Scope C deferred to iteration 3. Still open for the owner: the 3600 s code-default TTL (frozen test), and anything that needs a live Vercel deploy (see NOT VERIFIED notes above).
 
 ---
 
